@@ -80,9 +80,11 @@ try:
         get_nearest_expiry, get_market_status, get_lot_size
     )
     from core.greeks        import calc_greeks, calc_iv, tte_years
-    from core.alert_engine  import AlertEngine
-    from core.trend_compass import TrendCompass
-    from data.trade_log     import TradeLog
+    from core.alert_engine   import AlertEngine
+    from core.trend_compass  import TrendCompass
+    from core.backtest_engine import BacktestEngine, BacktestConfig
+    from data.trade_log       import TradeLog
+    from data.market_snapshot import SnapshotDB, SnapshotCollector
     IMPORTS_OK   = True
     IMPORT_ERROR = ""
 except Exception as exc:
@@ -118,6 +120,11 @@ def init_session() -> bool:
                 chat_id   = TELEGRAM_CONFIG.get("chat_id",   ""),
                 enabled   = TELEGRAM_CONFIG.get("enabled",   False),
             )
+            # Backtesting — snapshot collector + engine
+            _snap_db = SnapshotDB()
+            st.session_state["snap_db"]        = _snap_db
+            st.session_state["snap_collector"] = SnapshotCollector(_snap_db)
+            st.session_state["bt_engine"]      = BacktestEngine(_snap_db)
         except Exception as exc:
             st.error(f"❌ Connection failed: {exc}")
             return False
@@ -2498,6 +2505,15 @@ def live_data_section(symbol, expiry):
     except Exception as _ae:
         logger.error(f"Alert engine error: {_ae}")
 
+    # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
+    try:
+        collector = st.session_state.get("snap_collector")
+        if collector is not None:
+            sig_result = generate_trade_signal(cache, symbol)
+            collector.collect(cache, symbol, sig_result)
+    except Exception as _sc:
+        logger.error(f"Snapshot collect error: {_sc}")
+
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)
 
@@ -3298,6 +3314,446 @@ def render_sidebar():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — BACKTESTER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_backtester(symbol: str):
+    """
+    World-class Backtesting Tab.
+    ─────────────────────────────
+    Panel 1 : Data Collection Status
+    Panel 2 : Configuration
+    Panel 3 : Results — Summary, Equity Curve, Trade Table
+    Panel 4 : Best Conditions Analysis
+    Panel 5 : Walk-Forward Validation
+    Panel 6 : Monte Carlo Robustness Test
+    """
+    st.markdown("## 🔬 Backtester — Signal Validator")
+    st.caption(
+        "System ne jo signals diye, unhe historically test karo. "
+        "Real data, realistic costs, zero look-ahead bias."
+    )
+
+    snap_db    = st.session_state.get("snap_db")
+    bt_engine  = st.session_state.get("bt_engine")
+
+    if snap_db is None or bt_engine is None:
+        st.error("Backtester initialize nahi hua. Dashboard restart karo.")
+        return
+
+    # ── Panel 1: Data Collection Status ──────────────────────────────────────
+    with st.expander("📦 Data Collection Status", expanded=True):
+        stats = snap_db.get_stats()
+        total = stats.get("total_snapshots", 0)
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Snapshots", f"{total:,}")
+        col2.metric("Signals Logged", f"{stats.get('total_signals', 0):,}")
+
+        by_sym = {r["symbol"]: r for r in stats.get("by_symbol", [])}
+        sym_data = by_sym.get(symbol, {})
+        col3.metric(
+            f"{symbol} Data",
+            f"{sym_data.get('n', 0):,} snapshots"
+        )
+
+        if total == 0:
+            st.warning(
+                "⏳ Abhi tak koi data collect nahi hua.\n\n"
+                "**Kya karo:** Dashboard ko Live tab pe open rakho — "
+                "har 5 minute mein automatically data save hota rahega. "
+                "3-4 din baad backtesting shuru kar sakte ho!"
+            )
+        else:
+            avail = snap_db.get_available_dates(symbol)
+            if avail:
+                st.success(
+                    f"✅ **{symbol}** data available: "
+                    f"`{avail.get('first', '?')}` to `{avail.get('last', '?')}` "
+                    f"({avail.get('total', 0):,} snapshots)"
+                )
+            st.info(
+                "💡 **Tip:** Jitna zyada data, utna reliable backtest. "
+                "1 mahine ka data = 2,000+ snapshots = solid results!"
+            )
+
+    st.divider()
+
+    # ── Panel 2: Configuration ────────────────────────────────────────────────
+    st.markdown("### ⚙️ Backtest Configuration")
+
+    avail_dates = snap_db.get_available_dates(symbol)
+    default_from = avail_dates.get("first", "2025-01-01")
+    default_to   = avail_dates.get("last",  "2025-12-31")
+
+    with st.form("bt_config_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            from_date = st.text_input(
+                "From Date (YYYY-MM-DD)", value=default_from,
+                help="Start date for backtest"
+            )
+            min_score = st.slider(
+                "Min Confidence Score", 20, 80, 30, 5,
+                help="Minimum signal score to trade"
+            )
+            min_pcr = st.number_input(
+                "Min PCR (BUY CE)", value=1.2, step=0.1,
+                help="PCR below this → skip BUY CE"
+            )
+
+        with c2:
+            to_date = st.text_input(
+                "To Date (YYYY-MM-DD)", value=default_to,
+                help="End date for backtest"
+            )
+            max_vix = st.slider(
+                "Max VIX", 10.0, 30.0, 20.0, 0.5,
+                help="Skip trades if VIX above this"
+            )
+            lots = st.number_input(
+                "Lots per Trade", value=1, min_value=1, max_value=10,
+                help="Lot size for simulation"
+            )
+
+        c3, c4 = st.columns(2)
+        with c3:
+            entry_start = st.selectbox(
+                "Entry Window Start",
+                ["09:30", "09:45", "10:00", "10:15", "10:30"],
+                index=1
+            )
+        with c4:
+            entry_end = st.selectbox(
+                "Entry Window End",
+                ["10:30", "11:00", "11:30", "12:00"],
+                index=2
+            )
+
+        use_wf = st.checkbox(
+            "Walk-Forward Validation", value=True,
+            help="Split data into Train/Validate/Test — prevents curve-fitting"
+        )
+        mc_runs = st.select_slider(
+            "Monte Carlo Iterations",
+            options=[100, 500, 1000, 2000, 5000],
+            value=1000,
+            help="More iterations = more reliable robustness score"
+        )
+
+        run_btn = st.form_submit_button(
+            "🚀 Run Backtest",
+            use_container_width=True,
+            type="primary"
+        )
+
+    if not run_btn:
+        st.info("👆 Configuration set karo aur **Run Backtest** dabao!")
+        return
+
+    # ── Run ───────────────────────────────────────────────────────────────────
+    config = BacktestConfig(
+        symbol           = symbol,
+        from_date        = from_date,
+        to_date          = to_date,
+        min_score        = min_score,
+        max_vix          = max_vix,
+        min_pcr_bull     = float(min_pcr),
+        lots             = int(lots),
+        entry_start      = entry_start,
+        entry_end        = entry_end,
+        use_walk_forward = use_wf,
+        monte_carlo_runs = mc_runs,
+    )
+
+    with st.spinner("🔬 Backtesting chal raha hai..."):
+        result = bt_engine.run(config)
+
+    if result.error:
+        st.error(f"❌ {result.error}")
+        return
+
+    an = result.analytics
+    st.divider()
+
+    # ── Panel 3: Summary ──────────────────────────────────────────────────────
+    st.markdown("### 📊 Results Summary")
+
+    # Color coding
+    wr_color  = "#00c853" if an.win_rate >= 55 else ("#ffd740" if an.win_rate >= 45 else "#ff1744")
+    pf_color  = "#00c853" if an.profit_factor >= 1.5 else ("#ffd740" if an.profit_factor >= 1.0 else "#ff1744")
+    roi_color = "#00c853" if an.roi_pct > 0 else "#ff1744"
+
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Total Trades</div>
+        <div style="font-size:28px;font-weight:bold;color:#fff">{an.total_trades}</div>
+        <div style="color:#555;font-size:11px">{an.wins}W / {an.losses}L</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Win Rate</div>
+        <div style="font-size:28px;font-weight:bold;color:{wr_color}">{an.win_rate}%</div>
+        <div style="color:#555;font-size:11px">Avg Win {an.avg_win_pct:+.1f}% / Loss {an.avg_loss_pct:+.1f}%</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Profit Factor</div>
+        <div style="font-size:28px;font-weight:bold;color:{pf_color}">{an.profit_factor}</div>
+        <div style="color:#555;font-size:11px">&gt;1.5 = Good | &gt;2.0 = Excellent</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Total P&amp;L</div>
+        <div style="font-size:28px;font-weight:bold;color:{roi_color}">₹{an.total_pnl_rs:,.0f}</div>
+        <div style="color:#555;font-size:11px">ROI {an.roi_pct:+.1f}%</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Max Drawdown</div>
+        <div style="font-size:22px;font-weight:bold;color:#ff6d00">₹{an.max_drawdown_rs:,.0f}</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Sharpe Ratio</div>
+        <div style="font-size:22px;font-weight:bold;color:#7fb3f5">{an.sharpe_ratio}</div>
+        <div style="color:#555;font-size:11px">&gt;1.0 = Good</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Expectancy / Trade</div>
+        <div style="font-size:22px;font-weight:bold;color:#00d4ff">₹{an.expectancy_rs:,.0f}</div>
+      </div>
+      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#888;font-size:12px">Max Streak</div>
+        <div style="font-size:22px;font-weight:bold;color:#fff">
+          🟢{an.max_win_streak}  🔴{an.max_loss_streak}
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Exit reason breakdown
+    ec1, ec2, ec3 = st.columns(3)
+    ec1.metric("🎯 Target Hit",  f"{an.target_hit_rate:.1f}%")
+    ec2.metric("🛑 SL Hit",      f"{an.sl_hit_rate:.1f}%")
+    ec3.metric("⏱️ Time Exit",   f"{an.time_exit_rate:.1f}%")
+
+    st.divider()
+
+    # ── Equity Curve ──────────────────────────────────────────────────────────
+    if result.equity_curve and PLOTLY_OK:
+        st.markdown("### 📈 Equity Curve")
+        import plotly.graph_objects as go
+        eq = result.equity_curve
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x     = [f"{e['date']} {e['time']}" for e in eq],
+            y     = [e["equity"] for e in eq],
+            mode  = "lines",
+            name  = "Portfolio Value",
+            line  = dict(color="#00c853", width=2),
+            fill  = "tozeroy",
+            fillcolor = "rgba(0,200,83,0.1)",
+        ))
+        fig.update_layout(
+            paper_bgcolor = "#0e1117",
+            plot_bgcolor  = "#0e1117",
+            font          = dict(color="#fff"),
+            xaxis         = dict(title="Time", gridcolor="#2d3250"),
+            yaxis         = dict(title="Portfolio Value (₹)", gridcolor="#2d3250"),
+            height        = 350,
+            margin        = dict(l=10, r=10, t=30, b=10),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Daily P&L Bar Chart ───────────────────────────────────────────────────
+    if result.daily_pnl and PLOTLY_OK:
+        st.markdown("### 📅 Daily P&L")
+        dp = result.daily_pnl
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x     = [d["date"] for d in dp],
+            y     = [d["pnl"]  for d in dp],
+            marker_color = [
+                "#00c853" if d["pnl"] >= 0 else "#ff1744"
+                for d in dp
+            ],
+            name = "Daily P&L",
+        ))
+        fig2.update_layout(
+            paper_bgcolor = "#0e1117",
+            plot_bgcolor  = "#0e1117",
+            font          = dict(color="#fff"),
+            xaxis         = dict(gridcolor="#2d3250"),
+            yaxis         = dict(title="P&L (₹)", gridcolor="#2d3250"),
+            height        = 280,
+            margin        = dict(l=10, r=10, t=20, b=10),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Trade Table ───────────────────────────────────────────────────────────
+    st.markdown("### 📋 Trade Log")
+    if result.trades:
+        import pandas as pd
+        rows = []
+        for t in result.trades:
+            rows.append({
+                "Date":      t.date,
+                "Time":      t.time,
+                "Signal":    t.direction,
+                "Strike":    t.strike,
+                "Entry ₹":   t.entry_price,
+                "Exit ₹":    t.exit_price,
+                "Exit":      t.exit_reason,
+                "P&L %":     f"{t.pnl_pct:+.1f}%",
+                "P&L ₹":     f"₹{t.pnl_rs:+,.0f}",
+                "Score":     t.score,
+                "VIX":       t.vix,
+                "PCR":       t.pcr,
+            })
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df,
+            use_container_width = True,
+            height              = 300,
+        )
+
+        # Download button
+        csv = df.to_csv(index=False)
+        st.download_button(
+            "⬇️ Download Trade Log (CSV)",
+            data      = csv,
+            file_name = f"backtest_{symbol}_{from_date}_{to_date}.csv",
+            mime      = "text/csv",
+        )
+
+    st.divider()
+
+    # ── Panel 4: Best Conditions ──────────────────────────────────────────────
+    st.markdown("### 🏆 Best Conditions Analysis")
+    st.caption("Konsa combination sabse zyada kaam karta hai?")
+
+    bc = result.best_conditions
+    cond_tabs = st.tabs(["PCR", "VIX", "Time", "Score", "Exit", "IV Rank"])
+
+    def _cond_table(data: dict):
+        if not data:
+            st.caption("Data nahi hai.")
+            return
+        rows = []
+        for label, v in data.items():
+            if v:
+                wr = v.get("win_rate", 0)
+                rows.append({
+                    "Condition": label,
+                    "Trades":    v.get("count", 0),
+                    "Win Rate":  f"{wr:.1f}%",
+                    "Total P&L": f"₹{v.get('total_pnl', 0):+,.0f}",
+                    "Avg P&L":   f"₹{v.get('avg_pnl', 0):+,.0f}",
+                    "Verdict":   "✅ Best" if wr >= 60 else ("⚠️ OK" if wr >= 45 else "❌ Avoid"),
+                })
+        if rows:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with cond_tabs[0]: _cond_table(bc.get("by_pcr", {}))
+    with cond_tabs[1]: _cond_table(bc.get("by_vix", {}))
+    with cond_tabs[2]: _cond_table(bc.get("by_time", {}))
+    with cond_tabs[3]: _cond_table(bc.get("by_score", {}))
+    with cond_tabs[4]: _cond_table(bc.get("by_exit", {}))
+    with cond_tabs[5]: _cond_table(bc.get("by_iv_rank", {}))
+
+    st.divider()
+
+    # ── Panel 5: Walk-Forward ─────────────────────────────────────────────────
+    if result.walk_forward:
+        st.markdown("### 🔄 Walk-Forward Validation")
+        st.caption(
+            "Data ko 3 periods mein split kiya — Train → Validate → Test. "
+            "Teeno mein consistent results = strategy robust hai!"
+        )
+        import pandas as pd
+        wf_rows = []
+        for w in result.walk_forward:
+            pf = w.get("profit_factor", 0)
+            wr = w.get("win_rate", 0)
+            wf_rows.append({
+                "Period":         w.get("period", ""),
+                "Date Range":     w.get("date_range", ""),
+                "Snapshots":      w.get("snapshots", 0),
+                "Trades":         w.get("trades", 0),
+                "Win Rate":       f"{wr:.1f}%",
+                "Profit Factor":  f"{pf:.2f}",
+                "Total P&L":      f"₹{w.get('total_pnl_rs', 0):+,.0f}",
+                "ROI":            f"{w.get('roi_pct', 0):+.1f}%",
+                "Max Drawdown":   f"₹{w.get('max_dd_rs', 0):,.0f}",
+                "Result":         "✅ Robust" if wr >= 50 and pf >= 1.2 else "⚠️ Inconsistent",
+            })
+        st.dataframe(
+            pd.DataFrame(wf_rows),
+            use_container_width = True,
+            hide_index          = True,
+        )
+        # Consistency verdict
+        consistent = sum(
+            1 for w in result.walk_forward
+            if w.get("win_rate", 0) >= 50 and w.get("profit_factor", 0) >= 1.2
+        )
+        total_periods = len(result.walk_forward)
+        if consistent == total_periods:
+            st.success(f"🎯 Strategy {total_periods}/{total_periods} periods mein consistent — ROBUST hai!")
+        elif consistent >= total_periods // 2:
+            st.warning(f"⚠️ Strategy {consistent}/{total_periods} periods mein consistent — Theek hai but monitor karo.")
+        else:
+            st.error(f"❌ Strategy sirf {consistent}/{total_periods} periods mein kaam ki — Curve-fitting ho sakta hai!")
+
+    st.divider()
+
+    # ── Panel 6: Monte Carlo ──────────────────────────────────────────────────
+    if result.monte_carlo:
+        st.markdown("### 🎲 Monte Carlo Robustness Test")
+        mc = result.monte_carlo
+        st.caption(
+            f"{mc.get('iterations', 0):,} random simulations — "
+            "bad luck worst case scenario test."
+        )
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric(
+            "Profitable Probability",
+            f"{mc.get('prob_profitable', 0):.1f}%",
+            help="Kitni baar strategy profitable rahi?"
+        )
+        m2.metric(
+            "Median P&L",
+            f"₹{mc.get('pnl_median', 0):+,.0f}",
+            help="50% scenarios mein yeh result"
+        )
+        m3.metric(
+            "Best 5% Scenario",
+            f"₹{mc.get('pnl_95th_pct', 0):+,.0f}",
+            help="Top 5% lucky scenarios"
+        )
+        m4.metric(
+            "Worst 5% Scenario",
+            f"₹{mc.get('pnl_5th_pct', 0):+,.0f}",
+            help="Bottom 5% unlucky scenarios"
+        )
+        m5.metric(
+            "Worst Drawdown",
+            f"₹{mc.get('worst_dd_rs', 0):,.0f}",
+            help="Absolute worst drawdown across all simulations"
+        )
+
+        prob = mc.get("prob_profitable", 0)
+        if prob >= 80:
+            st.success(f"✅ Monte Carlo: {prob:.1f}% simulations profitable — Strategy ROBUST hai!")
+        elif prob >= 60:
+            st.warning(f"⚠️ Monte Carlo: {prob:.1f}% simulations profitable — Theek hai.")
+        else:
+            st.error(f"❌ Monte Carlo: Sirf {prob:.1f}% simulations profitable — Strategy shaky hai.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
@@ -3341,23 +3797,24 @@ def main():
     render_sidebar()
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📊  Live Dashboard",
         "🧠  Advanced Signals",
         "🧭  Trend Compass",
+        "🔬  Backtester",
     ])
 
     with tab1:
-        # Live data — har 60 sec auto-refresh, NO page reload
         live_data_section(symbol, expiry)
 
     with tab2:
-        # Advanced signals — SMI, Gamma Accel, Pin Probability, Expected Move, Cross-Asset
         advanced_signals_section(symbol, expiry)
 
     with tab3:
-        # Trend Compass — 9-point weekly + monthly rule-based bias
         trend_compass_section()
+
+    with tab4:
+        render_backtester(symbol)
 
 
 if __name__ == "__main__":
