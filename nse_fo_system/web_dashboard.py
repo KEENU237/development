@@ -2514,6 +2514,15 @@ def live_data_section(symbol, expiry):
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
+    # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
+    try:
+        collector = st.session_state.get("snap_collector")
+        if collector is not None:
+            sig_result = generate_trade_signal(cache, symbol)
+            collector.collect(cache, symbol, sig_result)
+    except Exception as _sc:
+        logger.error(f"Snapshot collect error: {_sc}")
+
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)
 
