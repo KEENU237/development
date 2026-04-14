@@ -3107,6 +3107,9 @@ def live_data_section(symbol, expiry):
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
+    # ── Header ──────────────────────────────────────────────────────────────
+    render_header(symbol, expiry, cache)
+
     # ── Recent Alerts Panel ──────────────────────────────────────────────────
     _render_alert_history()
 
@@ -3828,6 +3831,8 @@ def advanced_signals_section(symbol: str, expiry: str):
         kite  = st.session_state["kite"]
         cross = _calc_cross_assets(kite, cache.get("prices", {}))
 
+    render_header(symbol, expiry, cache)
+
     # ── Row 1: SMI  +  Cross-Asset ────────────────────────────────────────────
     col_a, col_b = st.columns(2)
     with col_a:
@@ -3875,44 +3880,22 @@ def render_sidebar() -> str:
     """
     sb = st.sidebar
 
-    # ── Header info in sidebar (replaces branding) ───────────────────────────
-    try:
-        _sym    = st.session_state.get("symbol", "NIFTY")
-        _status = get_market_status()
-        _s_col  = {"OPEN": "#00c853", "CLOSED": "#ff1744",
-                   "PRE-OPEN": "#ffd740", "WEEKEND": "#888"}.get(_status, "#ffd740")
-        _expiry = st.session_state.get("current_expiry", "—")
-        try:
-            _tlog   = st.session_state["trade_log"]
-            _sum    = _tlog.get_daily_summary()
-            _pnl    = _sum.get("gross_pnl", 0)
-            _trades = _sum.get("total_trades", 0)
-            _pnl_str = f"+₹{_pnl:,.0f}" if _pnl >= 0 else f"₹{_pnl:,.0f}"
-            _pnl_col = "#00c853" if _pnl >= 0 else "#ff1744"
-        except Exception:
-            _pnl_str, _pnl_col, _trades = "₹0", "#888", 0
-
-        sb.markdown(f"""
-        <div style="padding:12px 10px 10px;">
-            <div style="font-size:18px;font-weight:800;color:#2c3e60;
-                        letter-spacing:0.3px">{_sym}</div>
-            <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-                <span style="width:7px;height:7px;border-radius:50%;
-                             background:{_s_col};display:inline-block"></span>
-                <span style="font-size:11px;color:{_s_col};font-weight:600">{_status}</span>
-                <span style="font-size:10px;color:#8a96b0;margin-left:4px">
-                    Exp: {_expiry}</span>
-            </div>
-            <div style="margin-top:6px;font-size:12px;font-weight:600;color:{_pnl_col}">
-                {_pnl_str}
-                <span style="font-size:10px;color:#8a96b0;font-weight:400">
-                    &nbsp;({_trades} trades)</span>
+    # ── Branding — Sensibull style ────────────────────────────────────────────
+    sb.markdown("""
+    <div style="padding:18px 12px 14px;">
+        <div style="display:flex;align-items:center;gap:10px">
+            <div style="background:#2962ff;border-radius:8px;width:32px;height:32px;
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:18px;flex-shrink:0">📈</div>
+            <div>
+                <div style="font-size:14px;font-weight:700;color:#d1d4dc;
+                            letter-spacing:0.3px">NSE F&amp;O</div>
+                <div style="font-size:10px;color:#4a4f5e;margin-top:1px">
+                    Professional v2.2</div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
-    except Exception:
-        sb.markdown("<div style='padding:12px 10px'><b>NSE F&amp;O</b></div>",
-                    unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
     sb.divider()
 
@@ -4489,7 +4472,6 @@ def main():
         expiry = get_nearest_expiry(symbol, kite=kite.kite).isoformat()
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
-    st.session_state["current_expiry"] = expiry
 
     # ── Sidebar navigation ────────────────────────────────────────────────────
     page = render_sidebar()
