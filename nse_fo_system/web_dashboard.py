@@ -38,30 +38,95 @@ st.set_page_config(
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .stApp { background-color: #0e1117; color: #ffffff; }
+    /* ── App base ─────────────────────────────────────────── */
+    .stApp { background-color: #0a0d14; color: #e8eaf0; }
 
-    div[data-testid="metric-container"] {
-        background-color: #1e2130;
-        border: 1px solid #2d3250;
+    /* ── Sidebar ──────────────────────────────────────────── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0d1117 0%, #0a0f1e 100%);
+        border-right: 1px solid #1e2740;
+    }
+    [data-testid="stSidebar"] * { color: #c9d1e0 !important; }
+
+    /* ── Sidebar nav radio pills ──────────────────────────── */
+    div[data-testid="stSidebar"] .stRadio > div {
+        gap: 4px;
+    }
+    div[data-testid="stSidebar"] .stRadio label {
+        background: #131926;
+        border: 1px solid #1e2740;
         border-radius: 8px;
-        padding: 12px;
+        padding: 8px 12px !important;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 14px !important;
+        width: 100%;
+    }
+    div[data-testid="stSidebar"] .stRadio label:hover {
+        background: #1e2740;
+        border-color: #00d4ff44;
+    }
+    div[data-testid="stSidebar"] .stRadio [data-checked="true"] + label,
+    div[data-testid="stSidebar"] .stRadio label[data-checked="true"] {
+        background: linear-gradient(90deg, #00d4ff15, #7b68ee15);
+        border-color: #00d4ff66;
+        color: #00d4ff !important;
+    }
+
+    /* ── Metric cards ─────────────────────────────────────── */
+    div[data-testid="metric-container"] {
+        background: linear-gradient(135deg, #131926, #1a2035);
+        border: 1px solid #1e2740;
+        border-radius: 10px;
+        padding: 14px;
     }
     div[data-testid="metric-container"] label {
-        color: #888 !important; font-size: 12px;
+        color: #666 !important; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
     }
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
-        font-size: 22px; font-weight: bold;
+        font-size: 22px; font-weight: 700; color: #e8eaf0 !important;
     }
-    .stDataFrame { border-radius: 8px; }
-    h1 { color: #00d4ff !important; }
-    h2, h3 { color: #7fb3f5 !important; }
+
+    /* ── DataFrames ───────────────────────────────────────── */
+    .stDataFrame { border-radius: 10px; border: 1px solid #1e2740; }
+
+    /* ── Headings ─────────────────────────────────────────── */
+    h1 { color: #00d4ff !important; font-size: 22px !important; font-weight: 700; }
+    h2 { color: #7fb3f5 !important; font-size: 18px !important; }
+    h3 { color: #a0b4d0 !important; font-size: 15px !important; }
+
+    /* ── Hide Streamlit chrome ────────────────────────────── */
     #MainMenu { visibility: hidden; }
     footer    { visibility: hidden; }
     header    { visibility: hidden; }
+    [data-testid="stDecoration"] { display: none; }
+
+    /* ── Expanders ────────────────────────────────────────── */
     div[data-testid="stExpander"] {
-        background-color: #1e2130;
-        border-radius: 8px;
+        background: #131926;
+        border: 1px solid #1e2740;
+        border-radius: 10px;
     }
+
+    /* ── Buttons ──────────────────────────────────────────── */
+    .stButton > button {
+        background: linear-gradient(135deg, #1e2740, #252d45);
+        border: 1px solid #2d3a5e;
+        border-radius: 8px;
+        color: #c9d1e0;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        border-color: #00d4ff66;
+        color: #00d4ff;
+        background: linear-gradient(135deg, #1e2740, #1a2d4a);
+    }
+
+    /* ── Divider ──────────────────────────────────────────── */
+    hr { border-color: #1e2740 !important; }
+
+    /* ── Page top padding reduce karo ────────────────────── */
+    .block-container { padding-top: 1rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3457,43 +3522,110 @@ def advanced_signals_section(symbol: str, expiry: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR (bahar hai — refresh se affect nahi hota)
 # ══════════════════════════════════════════════════════════════════════════════
-def render_sidebar():
-    st.sidebar.markdown("## ⚙️ Controls")
+def render_sidebar() -> str:
+    """
+    Sidebar render karo — navigation + controls + status.
+    Returns: selected page name
+    """
+    sb = st.sidebar
 
-    # Symbol selector
+    # ── Branding ──────────────────────────────────────────────────────────────
+    sb.markdown("""
+    <div style="padding:16px 8px 8px;text-align:center">
+        <div style="font-size:28px">📈</div>
+        <div style="font-size:16px;font-weight:700;color:#00d4ff;letter-spacing:1px">
+            NSE F&O System
+        </div>
+        <div style="font-size:10px;color:#444;margin-top:2px">v2.2 — Professional Edition</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sb.divider()
+
+    # ── Symbol selector ───────────────────────────────────────────────────────
+    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
+                "letter-spacing:1px;margin-bottom:4px'>Symbol</div>",
+                unsafe_allow_html=True)
     current = st.session_state.get("symbol", "NIFTY")
-    new_sym = st.sidebar.selectbox(
-        "Symbol",
-        ["NIFTY", "BANKNIFTY", "FINNIFTY"],
-        index=["NIFTY", "BANKNIFTY", "FINNIFTY"].index(current),
+    sym_options = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+    new_sym = sb.selectbox(
+        "symbol_sel", sym_options,
+        index=sym_options.index(current),
+        label_visibility="collapsed"
     )
     if new_sym != current:
         st.session_state["symbol"] = new_sym
         st.rerun()
 
-    st.sidebar.divider()
-    st.sidebar.markdown("## 📋 Today's Trades")
+    sb.divider()
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
+                "letter-spacing:1px;margin-bottom:6px'>Navigation</div>",
+                unsafe_allow_html=True)
+
+    pages = [
+        "📊  Live Dashboard",
+        "🧠  Advanced Signals",
+        "🧭  Trend Compass",
+        "🔬  Backtester",
+    ]
+    page = sb.radio("nav", pages, label_visibility="collapsed")
+
+    sb.divider()
+
+    # ── Today's P&L ───────────────────────────────────────────────────────────
+    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
+                "letter-spacing:1px;margin-bottom:6px'>Today's P&L</div>",
+                unsafe_allow_html=True)
     try:
         summary = st.session_state["trade_log"].get_daily_summary()
         pnl     = summary.get("gross_pnl", 0)
-        st.sidebar.metric("Gross P&L", f"₹{pnl:,.0f}")
-        st.sidebar.metric("Total Trades", summary.get("total_trades", 0))
-        st.sidebar.metric("Win Rate",    f"{summary.get('win_rate',0):.1f}%")
+        pnl_col = "#00c853" if pnl >= 0 else "#ff1744"
+        trades  = summary.get("total_trades", 0)
+        wr      = summary.get("win_rate", 0)
+        sb.markdown(f"""
+        <div style="background:#131926;border:1px solid #1e2740;border-radius:10px;padding:12px">
+            <div style="font-size:22px;font-weight:700;color:{pnl_col}">
+                {'▲' if pnl>=0 else '▼'} ₹{abs(pnl):,.0f}
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;
+                        font-size:12px;color:#666">
+                <span>Trades: <b style="color:#c9d1e0">{trades}</b></span>
+                <span>Win Rate: <b style="color:{pnl_col}">{wr:.0f}%</b></span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     except Exception:
-        st.sidebar.caption("No trades today")
+        sb.markdown(
+            "<div style='color:#444;font-size:12px;text-align:center;"
+            "padding:10px'>No trades today</div>",
+            unsafe_allow_html=True
+        )
 
-    st.sidebar.divider()
-    st.sidebar.markdown("""
-    **How to use:**
-    - Symbol change → sidebar dropdown
-    - Data auto-refreshes every **60 seconds**
-    - Page reload nahi hoga — smooth update
-    """)
-    st.sidebar.markdown(
-        "<div style='color:#333;font-size:11px;text-align:center'>"
-        "NSE F&O Dashboard v2.1</div>",
+    sb.divider()
+
+    # ── Connection status ─────────────────────────────────────────────────────
+    mkt = get_market_status()
+    mkt_open   = mkt.get("is_open", False)
+    mkt_status = "🟢 Market Open" if mkt_open else "🔴 Market Closed"
+    now_str    = datetime.now().strftime("%H:%M:%S")
+
+    sb.markdown(f"""
+    <div style="font-size:12px;padding:4px 0">
+        <div>{mkt_status}</div>
+        <div style="color:#444;font-size:11px;margin-top:4px">Last refresh: {now_str}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sb.divider()
+    sb.markdown(
+        "<div style='color:#222;font-size:10px;text-align:center;padding-top:4px'>"
+        "Auto-refresh: 60s &nbsp;|&nbsp; Data: Kite API</div>",
         unsafe_allow_html=True
     )
+
+    return page
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3976,27 +4108,20 @@ def main():
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
 
-    # Sidebar (static — refresh mein nahi badlega)
-    render_sidebar()
+    # ── Sidebar navigation ────────────────────────────────────────────────────
+    page = render_sidebar()
 
-    # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊  Live Dashboard",
-        "🧠  Advanced Signals",
-        "🧭  Trend Compass",
-        "🔬  Backtester",
-    ])
-
-    with tab1:
+    # ── Page routing ──────────────────────────────────────────────────────────
+    if "Live Dashboard" in page:
         live_data_section(symbol, expiry)
 
-    with tab2:
+    elif "Advanced Signals" in page:
         advanced_signals_section(symbol, expiry)
 
-    with tab3:
+    elif "Trend Compass" in page:
         trend_compass_section()
 
-    with tab4:
+    elif "Backtester" in page:
         render_backtester(symbol)
 
 
