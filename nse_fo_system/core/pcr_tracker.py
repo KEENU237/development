@@ -38,6 +38,8 @@ class OIStrike:
     pe_oi: int
     pe_oi_chg: int
     pe_ltp: float
+    ce_volume: int = 0
+    pe_volume: int = 0
 
     @property
     def pcr(self) -> float:
@@ -211,6 +213,8 @@ class PCRTracker:
                 pe_oi     = pe_oi,
                 pe_oi_chg = pe_oi - pe_prev,
                 pe_ltp    = pe_q.get("last_price", 0),
+                ce_volume = ce_q.get("volume", 0),
+                pe_volume = pe_q.get("volume", 0),
             ))
 
         # Update in-memory + save to disk
