@@ -38,62 +38,83 @@ st.set_page_config(
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── App base ─────────────────────────────────────────── */
-    .stApp { background-color: #0a0d14; color: #e8eaf0; }
+    /* ── App base — deep navy ──────────────────────────────── */
+    .stApp {
+        background: linear-gradient(160deg, #0f1729 0%, #111827 60%, #0f1923 100%);
+        color: #dde4f0;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+    }
 
-    /* ── Sidebar ──────────────────────────────────────────── */
+    /* ── Sidebar — rich dark blue ─────────────────────────── */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0d1117 0%, #0a0f1e 100%);
-        border-right: 1px solid #1e2740;
+        background: linear-gradient(180deg, #0c1220 0%, #0e1628 50%, #0b1020 100%) !important;
+        border-right: 1px solid #1c2d4a;
     }
-    [data-testid="stSidebar"] * { color: #c9d1e0 !important; }
+    [data-testid="stSidebar"] * { color: #b8c8e0 !important; }
 
-    /* ── Sidebar nav radio pills ──────────────────────────── */
-    div[data-testid="stSidebar"] .stRadio > div {
-        gap: 4px;
-    }
+    /* ── Nav radio pills ─────────────────────────────────── */
+    div[data-testid="stSidebar"] .stRadio > div { gap: 6px; }
     div[data-testid="stSidebar"] .stRadio label {
-        background: #131926;
-        border: 1px solid #1e2740;
-        border-radius: 8px;
-        padding: 8px 12px !important;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #1c2d4a;
+        border-radius: 10px;
+        padding: 10px 14px !important;
         cursor: pointer;
-        transition: all 0.2s;
-        font-size: 14px !important;
+        transition: all 0.2s ease;
+        font-size: 13px !important;
         width: 100%;
+        margin: 1px 0;
     }
     div[data-testid="stSidebar"] .stRadio label:hover {
-        background: #1e2740;
-        border-color: #00d4ff44;
-    }
-    div[data-testid="stSidebar"] .stRadio [data-checked="true"] + label,
-    div[data-testid="stSidebar"] .stRadio label[data-checked="true"] {
-        background: linear-gradient(90deg, #00d4ff15, #7b68ee15);
-        border-color: #00d4ff66;
-        color: #00d4ff !important;
+        background: rgba(0, 200, 255, 0.08);
+        border-color: #00c8ff44;
+        color: #00c8ff !important;
     }
 
     /* ── Metric cards ─────────────────────────────────────── */
     div[data-testid="metric-container"] {
-        background: linear-gradient(135deg, #131926, #1a2035);
-        border: 1px solid #1e2740;
-        border-radius: 10px;
-        padding: 14px;
+        background: linear-gradient(135deg, #141f35 0%, #1a2844 100%);
+        border: 1px solid #1c3050;
+        border-radius: 12px;
+        padding: 14px 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
     div[data-testid="metric-container"] label {
-        color: #666 !important; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+        color: #5a7a99 !important;
+        font-size: 11px !important;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
     }
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
-        font-size: 22px; font-weight: 700; color: #e8eaf0 !important;
+        font-size: 24px !important;
+        font-weight: 700 !important;
+        color: #e8f0ff !important;
     }
 
     /* ── DataFrames ───────────────────────────────────────── */
-    .stDataFrame { border-radius: 10px; border: 1px solid #1e2740; }
+    .stDataFrame {
+        border-radius: 12px !important;
+        border: 1px solid #1c3050 !important;
+        overflow: hidden;
+    }
 
     /* ── Headings ─────────────────────────────────────────── */
-    h1 { color: #00d4ff !important; font-size: 22px !important; font-weight: 700; }
-    h2 { color: #7fb3f5 !important; font-size: 18px !important; }
-    h3 { color: #a0b4d0 !important; font-size: 15px !important; }
+    h1 {
+        color: #38bdf8 !important;
+        font-size: 22px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.3px;
+    }
+    h2 {
+        color: #7dd3fc !important;
+        font-size: 17px !important;
+        font-weight: 600 !important;
+    }
+    h3 {
+        color: #94b8d4 !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+    }
 
     /* ── Hide Streamlit chrome ────────────────────────────── */
     #MainMenu { visibility: hidden; }
@@ -103,30 +124,65 @@ st.markdown("""
 
     /* ── Expanders ────────────────────────────────────────── */
     div[data-testid="stExpander"] {
-        background: #131926;
-        border: 1px solid #1e2740;
-        border-radius: 10px;
+        background: linear-gradient(135deg, #141f35, #1a2844);
+        border: 1px solid #1c3050 !important;
+        border-radius: 12px;
     }
 
     /* ── Buttons ──────────────────────────────────────────── */
     .stButton > button {
-        background: linear-gradient(135deg, #1e2740, #252d45);
-        border: 1px solid #2d3a5e;
-        border-radius: 8px;
-        color: #c9d1e0;
-        transition: all 0.2s;
+        background: linear-gradient(135deg, #1a2a45, #1e3355);
+        border: 1px solid #2a4a70;
+        border-radius: 10px;
+        color: #b8d0f0 !important;
+        font-weight: 500;
+        padding: 8px 20px;
+        transition: all 0.2s ease;
     }
     .stButton > button:hover {
-        border-color: #00d4ff66;
-        color: #00d4ff;
-        background: linear-gradient(135deg, #1e2740, #1a2d4a);
+        background: linear-gradient(135deg, #1e3a60, #254878);
+        border-color: #38bdf866;
+        color: #38bdf8 !important;
+        box-shadow: 0 0 12px rgba(56,189,248,0.15);
+    }
+
+    /* ── Tabs (internal use) ─────────────────────────────── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #141f35;
+        border-radius: 10px;
+        padding: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        color: #7a9aba !important;
+        font-size: 13px;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #1e3355 !important;
+        color: #38bdf8 !important;
+    }
+
+    /* ── Info / warning / success boxes ─────────────────── */
+    div[data-testid="stAlert"] {
+        border-radius: 10px !important;
     }
 
     /* ── Divider ──────────────────────────────────────────── */
-    hr { border-color: #1e2740 !important; }
+    hr { border-color: #1c2d4a !important; margin: 12px 0 !important; }
 
-    /* ── Page top padding reduce karo ────────────────────── */
-    .block-container { padding-top: 1rem !important; }
+    /* ── Page padding ─────────────────────────────────────── */
+    .block-container {
+        padding-top: 1.2rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+
+    /* ── Selectbox ────────────────────────────────────────── */
+    [data-testid="stSelectbox"] > div {
+        background: #141f35 !important;
+        border-color: #1c3050 !important;
+        border-radius: 8px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3531,12 +3587,17 @@ def render_sidebar() -> str:
 
     # ── Branding ──────────────────────────────────────────────────────────────
     sb.markdown("""
-    <div style="padding:16px 8px 8px;text-align:center">
-        <div style="font-size:28px">📈</div>
-        <div style="font-size:16px;font-weight:700;color:#00d4ff;letter-spacing:1px">
+    <div style="padding:16px 8px 12px;text-align:center">
+        <div style="font-size:32px;margin-bottom:4px">📈</div>
+        <div style="font-size:15px;font-weight:700;
+                    background:linear-gradient(90deg,#38bdf8,#818cf8);
+                    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                    letter-spacing:1.2px">
             NSE F&O System
         </div>
-        <div style="font-size:10px;color:#444;margin-top:2px">v2.2 — Professional Edition</div>
+        <div style="font-size:10px;color:#2a4060;margin-top:3px;letter-spacing:0.5px">
+            Professional Edition v2.2
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -3606,21 +3667,21 @@ def render_sidebar() -> str:
     sb.divider()
 
     # ── Connection status ─────────────────────────────────────────────────────
-    mkt = get_market_status()
-    mkt_open   = mkt.get("is_open", False)
-    mkt_status = "🟢 Market Open" if mkt_open else "🔴 Market Closed"
+    mkt        = get_market_status()   # returns string: 'OPEN','PRE-OPEN','CLOSED','WEEKEND'
+    mkt_open   = (mkt == "OPEN")
+    mkt_status = "🟢 Market Open" if mkt_open else ("🟡 Pre-Open" if mkt == "PRE-OPEN" else "🔴 Market Closed")
     now_str    = datetime.now().strftime("%H:%M:%S")
 
     sb.markdown(f"""
     <div style="font-size:12px;padding:4px 0">
         <div>{mkt_status}</div>
-        <div style="color:#444;font-size:11px;margin-top:4px">Last refresh: {now_str}</div>
+        <div style="color:#6b7a99;font-size:11px;margin-top:4px">Last refresh: {now_str}</div>
     </div>
     """, unsafe_allow_html=True)
 
     sb.divider()
     sb.markdown(
-        "<div style='color:#222;font-size:10px;text-align:center;padding-top:4px'>"
+        "<div style='color:#3a4460;font-size:10px;text-align:center;padding-top:4px'>"
         "Auto-refresh: 60s &nbsp;|&nbsp; Data: Kite API</div>",
         unsafe_allow_html=True
     )
