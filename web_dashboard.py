@@ -38,9 +38,9 @@ st.set_page_config(
 # ── CSS — Sensibull / TradingView inspired ────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── Base — TradingView dark ──────────────────────────── */
+    /* ── Base ────────────────────────────────────────────── */
     .stApp {
-        background-color: #131722;
+        background-color: #1a1d2e;
         color: #d1d4dc;
         font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
         font-size: 13px;
@@ -48,7 +48,7 @@ st.markdown("""
 
     /* ── Sidebar ──────────────────────────────────────────── */
     [data-testid="stSidebar"] {
-        background-color: #1e2130 !important;
+        background-color: #13152a !important;
         border-right: 1px solid #2a2e39;
     }
     [data-testid="stSidebar"] * { color: #b2b5be !important; }
@@ -1183,37 +1183,29 @@ def render_header(symbol, expiry, cache):
                 padding:10px 18px;margin-bottom:14px;
                 display:flex;justify-content:space-between;align-items:center;
                 flex-wrap:wrap;gap:12px;">
-
-        <!-- Left: Symbol + Expiry -->
         <div style="display:flex;align-items:center;gap:16px">
             <span style="font-size:18px;font-weight:700;color:#d1d4dc">{symbol}</span>
             <span style="background:#2a2e39;border-radius:4px;padding:3px 8px;
                          font-size:11px;color:#787b86;font-weight:500">
-                Expiry: <b style="color:#b2b5be">{expiry}</b>
+                Expiry &nbsp;<b style="color:#b2b5be">{expiry}</b>
             </span>
-            <span style="display:flex;align-items:center;gap:5px;font-size:12px">
+            <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px">
                 <span style="width:7px;height:7px;border-radius:50%;
                              background:{s_color};display:inline-block"></span>
                 <span style="color:#787b86">{status}</span>
             </span>
         </div>
-
-        <!-- Right: P&L + refresh -->
         <div style="display:flex;align-items:center;gap:20px">
             <div>
                 <div style="font-size:10px;color:#4a4f5e;text-transform:uppercase;
                              letter-spacing:0.6px">Day P&amp;L</div>
                 <div style="font-size:16px;font-weight:600;color:{pnl_col}">
-                    {pnl_str}
-                    <span style="font-size:11px;color:#4a4f5e;font-weight:400">
-                        &nbsp;({trades} trades)
-                    </span>
+                    {pnl_str}&nbsp;<span style="font-size:11px;color:#4a4f5e;
+                    font-weight:400">({trades} trades)</span>
                 </div>
             </div>
             <div style="font-size:11px;color:#363a45;border-left:1px solid #2a2e39;
-                         padding-left:16px">
-                🔄 {fetched}
-            </div>
+                         padding-left:16px">&#x1f504; {fetched}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3700,7 +3692,7 @@ def render_sidebar() -> str:
 
     sb.markdown(
         "<div style='color:#2a2e39;font-size:10px;text-align:center;"
-        "padding:6px 0 2px'>Kite API · 60s refresh</div>",
+        "padding:6px 0 2px'>Live Data · Auto-refresh 60s</div>",
         unsafe_allow_html=True
     )
 
