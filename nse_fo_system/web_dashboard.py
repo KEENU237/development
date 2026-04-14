@@ -3881,11 +3881,7 @@ def render_sidebar() -> str:
         _status = get_market_status()
         _s_col  = {"OPEN": "#00c853", "CLOSED": "#ff1744",
                    "PRE-OPEN": "#ffd740", "WEEKEND": "#888"}.get(_status, "#ffd740")
-        try:
-            _kite   = st.session_state["kite"]
-            _expiry = get_nearest_expiry(_sym, kite=_kite.kite).isoformat()
-        except Exception:
-            _expiry = get_nearest_expiry(_sym).isoformat()
+        _expiry = st.session_state.get("current_expiry", "—")
         try:
             _tlog   = st.session_state["trade_log"]
             _sum    = _tlog.get_daily_summary()
@@ -4493,6 +4489,7 @@ def main():
         expiry = get_nearest_expiry(symbol, kite=kite.kite).isoformat()
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
+    st.session_state["current_expiry"] = expiry
 
     # ── Sidebar navigation ────────────────────────────────────────────────────
     page = render_sidebar()
