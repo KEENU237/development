@@ -3213,26 +3213,26 @@ def _compute_market_pulse(cache: dict, symbol: str) -> dict:
                       "signal": "INTRADAY ONLY", "pts": 0, "max": 10, "color": "#8a96b0"})
 
     # ── Final labels ──────────────────────────────────────────────────────────
-    # raw is roughly -80 to +80 (some comps may be absent)
-    # Clamp to ±80, then normalize to 0-100
+    # raw roughly -80 to +80; clamp then map to 0-100
     raw_clamped  = max(-80, min(80, raw))
     display_pct  = int((raw_clamped + 80) / 160 * 100)  # 0-100
 
-    if   display_pct >= 72: label = "STRONG BULLISH"; border = "#1b7a2e"; bg = "#f0fff4"
-    elif display_pct >= 58: label = "BULLISH";         border = "#2e7d32"; bg = "#f0fff4"
-    elif display_pct >= 48: label = "SLIGHTLY BULLISH";border = "#558b2f"; bg = "#f9fbe7"
-    elif display_pct >= 42: label = "NEUTRAL";         border = "#b07c00"; bg = "#fffde7"
-    elif display_pct >= 32: label = "SLIGHTLY BEARISH";border = "#e65100"; bg = "#fff8f0"
-    elif display_pct >= 18: label = "BEARISH";         border = "#c0392b"; bg = "#fff5f5"
+    # Wider neutral zone — ±8 pts around centre (50) = 45-55
+    if   display_pct >= 73: label = "STRONG BULLISH"; border = "#1b7a2e"; bg = "#f0fff4"
+    elif display_pct >= 60: label = "BULLISH";         border = "#2e7d32"; bg = "#f0fff4"
+    elif display_pct >= 55: label = "SLIGHTLY BULLISH";border = "#558b2f"; bg = "#f9fbe7"
+    elif display_pct >= 45: label = "NEUTRAL";         border = "#b07c00"; bg = "#fffde7"
+    elif display_pct >= 40: label = "SLIGHTLY BEARISH";border = "#e65100"; bg = "#fff8f0"
+    elif display_pct >= 27: label = "BEARISH";         border = "#c0392b"; bg = "#fff5f5"
     else:                   label = "STRONG BEARISH";  border = "#b71c1c"; bg = "#fff5f5"
 
-    # Final call
-    if   display_pct >= 58: call = "▲ BUY CE";    call_col = "#1b7a2e"
-    elif display_pct <= 42: call = "▼ BUY PE";    call_col = "#c0392b"
+    # Final call — wider neutral band
+    if   display_pct >= 58: call = "▲ BUY CE";             call_col = "#1b7a2e"
+    elif display_pct <= 42: call = "▼ BUY PE";             call_col = "#c0392b"
     else:                   call = "→ WAIT / SELL PREMIUM"; call_col = "#b07c00"
 
-    if   abs(raw_clamped) >= 60: confidence = "HIGH"
-    elif abs(raw_clamped) >= 35: confidence = "MEDIUM"
+    if   abs(raw_clamped) >= 55: confidence = "HIGH"
+    elif abs(raw_clamped) >= 30: confidence = "MEDIUM"
     else:                        confidence = "LOW"
 
     return {
@@ -3250,121 +3250,121 @@ def _compute_market_pulse(cache: dict, symbol: str) -> dict:
 
 
 def render_market_pulse(cache: dict, symbol: str):
-    """Bloomberg-style unified market score panel."""
-    data = _compute_market_pulse(cache, symbol)
-    pct  = data["display_pct"]
-    raw  = data["raw"]
-    bg   = data["bg"]
-    bdr  = data["border"]
-    lbl  = data["label"]
-    call = data["call"]
-    ccol = data["call_col"]
-    conf = data["confidence"]
-    spot = data["spot"]
+    """Bloomberg-style unified market score panel — single st.markdown call."""
+    data  = _compute_market_pulse(cache, symbol)
+    pct   = data["display_pct"]
+    raw   = data["raw"]
+    bg    = data["bg"]
+    bdr   = data["border"]
+    lbl   = data["label"]
+    call  = data["call"]
+    ccol  = data["call_col"]
+    conf  = data["confidence"]
+    spot  = data["spot"]
     comps = data["components"]
-
-    # ── Big score bar ─────────────────────────────────────────────────────────
-    # Pct bar: left half = bearish (red), right half = bullish (green)
-    # Marker position at pct%
-    marker_left = max(1, min(98, pct))
 
     conf_col = {"HIGH": "#1b7a2e", "MEDIUM": "#b07c00", "LOW": "#8a96b0"}[conf]
     conf_bg  = {"HIGH": "#e8f5e9", "MEDIUM": "#fff8e1", "LOW": "#f0f3fa"}[conf]
+    active   = len([c for c in comps if c["pts"] != 0])
 
-    st.markdown(f"""
-    <div style="background:{bg};border:2px solid {bdr};border-radius:14px;
-                padding:18px 20px 14px;margin-bottom:14px">
+    # ── Gauge bar — two-div split (no absolute positioning needed) ────────────
+    # Left portion = filled (gradient red→color), Right = gray track
+    left_pct  = max(1, min(99, pct))
+    right_pct = 100 - left_pct
+    # Color the filled portion based on direction
+    if pct >= 55:
+        fill_grad = f"linear-gradient(to right,#ffeb3b,{bdr})"
+    elif pct <= 45:
+        fill_grad = f"linear-gradient(to right,{bdr},#ffeb3b)"
+    else:
+        fill_grad = "linear-gradient(to right,#ef9a9a,#fff9c4,#a5d6a7)"
 
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;
-                    margin-bottom:14px">
-            <div>
-                <div style="font-size:11px;color:#6b7a99;letter-spacing:1.5px;
-                             text-transform:uppercase;margin-bottom:4px">
-                    ⚡ Market Pulse &nbsp;·&nbsp; {symbol}</div>
-                <div style="font-size:26px;font-weight:800;color:{bdr};line-height:1">
-                    {lbl}</div>
-                <div style="font-size:12px;color:#6b7a99;margin-top:4px">
-                    Spot: <b style="color:#1a1a2e">{int(spot):,}</b>
-                    &nbsp;·&nbsp; Raw score: <b style="color:{bdr}">{raw:+d}</b>
-                </div>
-            </div>
-            <div style="text-align:right">
-                <div style="font-size:42px;font-weight:900;color:{bdr};line-height:1">
-                    {pct}</div>
-                <div style="font-size:11px;color:#6b7a99">/ 100</div>
-                <div style="background:{conf_bg};color:{conf_col};font-weight:700;
-                             font-size:11px;padding:3px 10px;border-radius:10px;
-                             margin-top:4px;display:inline-block">{conf} CONFIDENCE</div>
-            </div>
-        </div>
-
-        <div style="position:relative;height:12px;border-radius:6px;
-                    background:linear-gradient(to right,#ffcdd2,#fff9c4,#c8e6c9);
-                    margin-bottom:8px;overflow:visible">
-            <div style="position:absolute;left:{marker_left}%;top:-4px;
-                        width:20px;height:20px;border-radius:50%;
-                        background:{bdr};border:3px solid #fff;
-                        box-shadow:0 2px 6px rgba(0,0,0,0.2);
-                        transform:translateX(-50%)"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:10px;
-                    color:#8a96b0;margin-bottom:14px">
-            <span>STRONG BEARISH</span><span>NEUTRAL</span><span>STRONG BULLISH</span>
-        </div>
-
-        <div style="font-size:11px;color:#6b7a99;letter-spacing:1px;
-                     text-transform:uppercase;margin-bottom:8px">Components</div>
-    """, unsafe_allow_html=True)
-
-    # ── Component rows ────────────────────────────────────────────────────────
+    # ── Component rows HTML ───────────────────────────────────────────────────
     rows_html = ""
     for c in comps:
         pts     = c["pts"]
         max_pts = c["max"]
         col     = c["color"]
-        # bar width: 0-100% based on abs(pts)/max_pts
         bar_w   = int(abs(pts) / max_pts * 100) if max_pts else 0
         bar_col = col if pts != 0 else "#e0e4ef"
-        # pts display
         pts_str = f"{pts:+d}" if pts != 0 else "0"
-        rows_html += f"""
-        <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;
-                    margin:3px 0;background:#ffffff;border-radius:6px;
-                    border-left:3px solid {col}">
-            <span style="color:#3a4a6b;font-size:12px;min-width:110px;
-                          font-weight:500">{c['name']}</span>
-            <span style="color:#6b7a99;font-size:11px;min-width:80px">{c['value']}</span>
-            <div style="flex:1;height:6px;background:#f0f3fa;border-radius:3px;
-                        overflow:hidden">
-                <div style="width:{bar_w}%;height:6px;background:{bar_col};
-                             border-radius:3px"></div>
-            </div>
-            <span style="color:{col};font-size:11px;font-weight:700;
-                          min-width:30px;text-align:right">{pts_str}</span>
-            <span style="color:{col};font-size:11px;min-width:100px;
-                          font-weight:600">{c['signal']}</span>
-        </div>"""
+        rows_html += (
+            f"<div style='display:flex;align-items:center;gap:8px;padding:5px 8px;"
+            f"margin:3px 0;background:#ffffff;border-radius:6px;"
+            f"border-left:3px solid {col}'>"
+            f"<span style='color:#3a4a6b;font-size:12px;min-width:115px;"
+            f"font-weight:500'>{c['name']}</span>"
+            f"<span style='color:#6b7a99;font-size:11px;min-width:75px'>{c['value']}</span>"
+            f"<div style='flex:1;height:6px;background:#f0f3fa;border-radius:3px;overflow:hidden'>"
+            f"<div style='width:{bar_w}%;height:6px;background:{bar_col};border-radius:3px'></div>"
+            f"</div>"
+            f"<span style='color:{col};font-size:11px;font-weight:700;"
+            f"min-width:28px;text-align:right'>{pts_str}</span>"
+            f"<span style='color:{col};font-size:11px;font-weight:600;"
+            f"min-width:105px'>{c['signal']}</span>"
+            f"</div>"
+        )
 
-    st.markdown(rows_html, unsafe_allow_html=True)
-
-    # ── Final Call ────────────────────────────────────────────────────────────
+    # ── Single render call ────────────────────────────────────────────────────
     st.markdown(f"""
-        <div style="margin-top:12px;padding:12px 16px;background:#ffffff;
-                    border:2px solid {bdr};border-radius:8px;
-                    display:flex;align-items:center;justify-content:space-between">
-            <div>
-                <span style="font-size:11px;color:#6b7a99;
-                              letter-spacing:1px">FINAL CALL</span>
-                <div style="font-size:20px;font-weight:800;color:{ccol};
-                             margin-top:2px">{call}</div>
-            </div>
-            <div style="text-align:right;font-size:11px;color:#8a96b0">
-                Based on {len([c for c in comps if c['pts'] != 0])} active signals
-                <br>Score: {pct}/100 · {lbl}
-            </div>
-        </div>
+<div style="background:{bg};border:2px solid {bdr};border-radius:14px;
+            padding:18px 20px 16px;margin-bottom:14px">
+
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;
+              margin-bottom:12px">
+    <div>
+      <div style="font-size:11px;color:#6b7a99;letter-spacing:1.5px;
+                   text-transform:uppercase;margin-bottom:4px">
+          ⚡ Market Pulse &nbsp;·&nbsp; {symbol}</div>
+      <div style="font-size:26px;font-weight:800;color:{bdr};line-height:1.1">{lbl}</div>
+      <div style="font-size:12px;color:#6b7a99;margin-top:4px">
+          Spot: <b style="color:#1a1a2e">{int(spot):,}</b>
+          &nbsp;·&nbsp; Score: <b style="color:{bdr}">{raw:+d}</b>
+      </div>
     </div>
-    """, unsafe_allow_html=True)
+    <div style="text-align:right">
+      <div style="font-size:44px;font-weight:900;color:{bdr};line-height:1">{pct}</div>
+      <div style="font-size:11px;color:#6b7a99">/ 100</div>
+      <div style="background:{conf_bg};color:{conf_col};font-weight:700;
+                   font-size:11px;padding:3px 10px;border-radius:10px;
+                   margin-top:4px;display:inline-block">{conf} CONFIDENCE</div>
+    </div>
+  </div>
+
+  <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;
+              margin-bottom:4px;border:1px solid #e0e4ef">
+    <div style="width:{left_pct}%;background:{fill_grad};
+                border-right:3px solid {bdr}"></div>
+    <div style="width:{right_pct}%;background:#f0f3fa"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:10px;
+              color:#8a96b0;margin-bottom:14px">
+    <span>&#9650; STRONG BEARISH</span>
+    <span>NEUTRAL</span>
+    <span>STRONG BULLISH &#9650;</span>
+  </div>
+
+  <div style="font-size:10px;color:#6b7a99;letter-spacing:1px;
+               text-transform:uppercase;margin-bottom:6px">
+      Components ({active} active)</div>
+
+  {rows_html}
+
+  <div style="margin-top:10px;padding:12px 16px;background:#ffffff;
+              border:2px solid {bdr};border-radius:8px;
+              display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <div style="font-size:10px;color:#6b7a99;letter-spacing:1px">FINAL CALL</div>
+      <div style="font-size:22px;font-weight:800;color:{ccol};margin-top:2px">{call}</div>
+    </div>
+    <div style="text-align:right;font-size:11px;color:#8a96b0">
+      Based on {active} signals<br>
+      <b style="color:{bdr}">{pct}/100</b> &nbsp;·&nbsp; {lbl}
+    </div>
+  </div>
+
+</div>
+""", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
