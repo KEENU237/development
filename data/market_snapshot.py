@@ -5,7 +5,7 @@ Har 5 minute mein market data SQLite mein save karta hai.
 Backtest engine yahi data use karta hai.
 
 Tables:
-  snapshots  — PCR, VIX, OI, IV, GEX, price, signal har 5 min
+  snapshots  — PCR, VIX, OI, volume, IV, GEX, price, signal har 5 min
   signal_log — Generated BUY CE / BUY PE signals + outcome
 """
 
@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS snapshots (
     gex_total   REAL    DEFAULT 0,
     signal      TEXT    DEFAULT \'NO TRADE\',
     score       INTEGER DEFAULT 0,
-    atm         INTEGER DEFAULT 0
+    atm         INTEGER DEFAULT 0,
+    ce_oi       INTEGER DEFAULT 0,
+    pe_oi       INTEGER DEFAULT 0,
+    ce_volume   INTEGER DEFAULT 0,
+    pe_volume   INTEGER DEFAULT 0
 )
 """
 
@@ -69,6 +73,14 @@ CREATE TABLE IF NOT EXISTS signal_log (
 _IDX_SNAP = "CREATE INDEX IF NOT EXISTS idx_snap_sym_date ON snapshots(symbol, date)"
 _IDX_SIG  = "CREATE INDEX IF NOT EXISTS idx_sig_symbol ON signal_log(symbol)"
 
+# Columns added after v1 — auto-migrated if DB already exists
+_NEW_SNAP_COLS = {
+    "ce_oi":     "INTEGER DEFAULT 0",
+    "pe_oi":     "INTEGER DEFAULT 0",
+    "ce_volume": "INTEGER DEFAULT 0",
+    "pe_volume": "INTEGER DEFAULT 0",
+}
+
 
 class SnapshotDB:
     def __init__(self, db_path=DB_PATH):
@@ -88,7 +100,16 @@ class SnapshotDB:
             c.execute(_CREATE_SIGNAL_LOG)
             c.execute(_IDX_SNAP)
             c.execute(_IDX_SIG)
+            self._migrate(c)
             c.commit()
+
+    def _migrate(self, c):
+        """Purane DB mein naye columns add karo agar missing hain."""
+        existing = {row[1] for row in c.execute("PRAGMA table_info(snapshots)").fetchall()}
+        for col, defn in _NEW_SNAP_COLS.items():
+            if col not in existing:
+                c.execute(f"ALTER TABLE snapshots ADD COLUMN {col} {defn}")
+                logger.info(f"Migration: snapshots.{col} column added")
 
     def save_snapshot(self, data):
         try:
@@ -98,8 +119,9 @@ class SnapshotDB:
                         INSERT INTO snapshots
                           (ts,date,time,symbol,spot,pcr,pcr_zone,pcr_trend,
                            vix,iv_rank,atm_ce_ltp,atm_pe_ltp,oi_signal,
-                           gex_regime,gex_total,signal,score,atm)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           gex_regime,gex_total,signal,score,atm,
+                           ce_oi,pe_oi,ce_volume,pe_volume)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """, (
                         data.get("ts",         datetime.now().isoformat()),
                         data.get("date",       date.today().isoformat()),
@@ -119,6 +141,10 @@ class SnapshotDB:
                         data.get("signal",     "NO TRADE"),
                         data.get("score",      0),
                         data.get("atm",        0),
+                        data.get("ce_oi",      0),
+                        data.get("pe_oi",      0),
+                        data.get("ce_volume",  0),
+                        data.get("pe_volume",  0),
                     ))
                     c.commit()
             return True
@@ -198,10 +224,10 @@ class SnapshotDB:
     def get_stats(self):
         try:
             with self._conn() as c:
-                total    = c.execute("SELECT COUNT(*) as n FROM snapshots").fetchone()["n"]
-                by_sym   = c.execute("SELECT symbol,COUNT(*) as n,MIN(date) as first_date,MAX(date) as last_date FROM snapshots GROUP BY symbol").fetchall()
+                total     = c.execute("SELECT COUNT(*) as n FROM snapshots").fetchone()["n"]
+                by_sym    = c.execute("SELECT symbol,COUNT(*) as n,MIN(date) as first_date,MAX(date) as last_date FROM snapshots GROUP BY symbol").fetchall()
                 total_sig = c.execute("SELECT COUNT(*) as n FROM signal_log").fetchone()["n"]
-                outcomes = c.execute("SELECT outcome,COUNT(*) as n FROM signal_log WHERE outcome!=\'PENDING\' GROUP BY outcome").fetchall()
+                outcomes  = c.execute("SELECT outcome,COUNT(*) as n FROM signal_log WHERE outcome!=\'PENDING\' GROUP BY outcome").fetchall()
             return {
                 "total_snapshots": total,
                 "total_signals":   total_sig,
@@ -268,38 +294,61 @@ class SnapshotCollector:
         return (h, m) >= self.MARKET_START and (h, m) <= self.MARKET_END
 
     def _extract(self, cache, symbol, signal_result, now):
-        sym_map = {"NIFTY": "NSE:NIFTY 50", "BANKNIFTY": "NSE:NIFTY BANK", "FINNIFTY": "NSE:NIFTY FIN SERVICE"}
+        sym_map  = {"NIFTY": "NSE:NIFTY 50", "BANKNIFTY": "NSE:NIFTY BANK", "FINNIFTY": "NSE:NIFTY FIN SERVICE"}
         prices   = cache.get("prices",   {})
         iv_data  = cache.get("iv_data",  {})
         gex_data = cache.get("gex_data", {})
         pcr_data = cache.get("pcr_data", {})
         oi_chain = cache.get("oi_chain", [])
+
         spot = prices.get(sym_map.get(symbol, ""), 0)
         vix  = prices.get("NSE:INDIA VIX", 0)
+
         pcr = pcr_zone = pcr_trend = ""
         if pcr_data.get(symbol):
             r, trend = pcr_data[symbol]
             pcr, pcr_zone, pcr_trend = r.pcr, r.zone, trend
+
         step = 50 if symbol == "NIFTY" else 100
         atm  = int(round(spot / step) * step) if spot else 0
+
         atm_ce = atm_pe = 0.0
+        # Totals across all strikes
+        total_ce_oi = total_pe_oi = 0
+        total_ce_vol = total_pe_vol = 0
+
         for row in oi_chain:
-            if abs(row.strike - atm) <= step:
-                atm_ce, atm_pe = row.ce_ltp or 0, row.pe_ltp or 0
-                break
+            # ATM ltp
+            if abs(row.strike - atm) <= step and atm_ce == 0.0:
+                atm_ce = row.ce_ltp or 0
+                atm_pe = row.pe_ltp or 0
+            # Sum totals
+            total_ce_oi  += getattr(row, "ce_oi",     0) or 0
+            total_pe_oi  += getattr(row, "pe_oi",     0) or 0
+            total_ce_vol += getattr(row, "ce_volume",  0) or 0
+            total_pe_vol += getattr(row, "pe_volume",  0) or 0
+
         return {
-            "ts": now.isoformat(), "date": now.date().isoformat(),
-            "time": now.strftime("%H:%M"), "symbol": symbol,
-            "spot": round(float(spot), 2),
-            "pcr": round(float(pcr), 2) if pcr else 0,
-            "pcr_zone": str(pcr_zone), "pcr_trend": str(pcr_trend),
-            "vix": round(float(vix), 2),
-            "iv_rank": round(float(iv_data.get("iv_rank", 0)), 1),
+            "ts":        now.isoformat(),
+            "date":      now.date().isoformat(),
+            "time":      now.strftime("%H:%M"),
+            "symbol":    symbol,
+            "spot":      round(float(spot), 2),
+            "pcr":       round(float(pcr), 2) if pcr else 0,
+            "pcr_zone":  str(pcr_zone),
+            "pcr_trend": str(pcr_trend),
+            "vix":       round(float(vix), 2),
+            "iv_rank":   round(float(iv_data.get("iv_rank", 0)), 1),
             "atm_ce_ltp": round(float(atm_ce), 2),
             "atm_pe_ltp": round(float(atm_pe), 2),
-            "oi_signal": str(signal_result.get("build", "")),
+            "oi_signal":  str(signal_result.get("build", "")),
             "gex_regime": str(gex_data.get("regime", "")),
-            "gex_total": round(float(gex_data.get("total_gex", 0)), 2),
-            "signal": str(signal_result.get("signal", "NO TRADE")),
-            "score": int(signal_result.get("score", 0)), "atm": atm,
+            "gex_total":  round(float(gex_data.get("total_gex", 0)), 2),
+            "signal":     str(signal_result.get("signal", "NO TRADE")),
+            "score":      int(signal_result.get("score", 0)),
+            "atm":        atm,
+            "ce_oi":      int(total_ce_oi),
+            "pe_oi":      int(total_pe_oi),
+            "ce_volume":  int(total_ce_vol),
+            "pe_volume":  int(total_pe_vol),
         }
