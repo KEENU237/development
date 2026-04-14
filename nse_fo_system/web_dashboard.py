@@ -35,86 +35,73 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ── CSS — Sensibull / TradingView inspired ────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── App base — deep navy ──────────────────────────────── */
+    /* ── Base — TradingView dark ──────────────────────────── */
     .stApp {
-        background: linear-gradient(160deg, #0f1729 0%, #111827 60%, #0f1923 100%);
-        color: #dde4f0;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
+        background-color: #131722;
+        color: #d1d4dc;
+        font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+        font-size: 13px;
     }
 
-    /* ── Sidebar — rich dark blue ─────────────────────────── */
+    /* ── Sidebar ──────────────────────────────────────────── */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0c1220 0%, #0e1628 50%, #0b1020 100%) !important;
-        border-right: 1px solid #1c2d4a;
+        background-color: #1e2130 !important;
+        border-right: 1px solid #2a2e39;
     }
-    [data-testid="stSidebar"] * { color: #b8c8e0 !important; }
+    [data-testid="stSidebar"] * { color: #b2b5be !important; }
 
-    /* ── Nav radio pills ─────────────────────────────────── */
-    div[data-testid="stSidebar"] .stRadio > div { gap: 6px; }
+    /* ── Nav radio — Sensibull pill style ────────────────── */
+    div[data-testid="stSidebar"] .stRadio > div { gap: 2px; }
     div[data-testid="stSidebar"] .stRadio label {
-        background: rgba(255,255,255,0.03);
-        border: 1px solid #1c2d4a;
-        border-radius: 10px;
-        padding: 10px 14px !important;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        padding: 9px 12px !important;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: background 0.15s ease;
         font-size: 13px !important;
+        font-weight: 500 !important;
         width: 100%;
-        margin: 1px 0;
     }
     div[data-testid="stSidebar"] .stRadio label:hover {
-        background: rgba(0, 200, 255, 0.08);
-        border-color: #00c8ff44;
-        color: #00c8ff !important;
+        background: rgba(255,255,255,0.06) !important;
+        color: #d1d4dc !important;
     }
 
     /* ── Metric cards ─────────────────────────────────────── */
     div[data-testid="metric-container"] {
-        background: linear-gradient(135deg, #141f35 0%, #1a2844 100%);
-        border: 1px solid #1c3050;
-        border-radius: 12px;
-        padding: 14px 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        background-color: #1e2130;
+        border: 1px solid #2a2e39;
+        border-radius: 8px;
+        padding: 12px 16px;
     }
     div[data-testid="metric-container"] label {
-        color: #5a7a99 !important;
+        color: #787b86 !important;
         font-size: 11px !important;
         text-transform: uppercase;
-        letter-spacing: 0.8px;
+        letter-spacing: 0.6px;
+        font-weight: 500;
     }
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
-        font-size: 24px !important;
-        font-weight: 700 !important;
-        color: #e8f0ff !important;
+        font-size: 20px !important;
+        font-weight: 600 !important;
+        color: #d1d4dc !important;
     }
 
     /* ── DataFrames ───────────────────────────────────────── */
     .stDataFrame {
-        border-radius: 12px !important;
-        border: 1px solid #1c3050 !important;
-        overflow: hidden;
+        border-radius: 8px !important;
+        border: 1px solid #2a2e39 !important;
     }
 
     /* ── Headings ─────────────────────────────────────────── */
-    h1 {
-        color: #38bdf8 !important;
-        font-size: 22px !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.3px;
-    }
-    h2 {
-        color: #7dd3fc !important;
-        font-size: 17px !important;
-        font-weight: 600 !important;
-    }
-    h3 {
-        color: #94b8d4 !important;
-        font-size: 14px !important;
-        font-weight: 600 !important;
-    }
+    h1 { color: #2962ff !important; font-size: 18px !important; font-weight: 600 !important; }
+    h2 { color: #d1d4dc !important; font-size: 15px !important; font-weight: 600 !important; }
+    h3 { color: #787b86 !important; font-size: 11px !important; font-weight: 600 !important;
+         text-transform: uppercase; letter-spacing: 0.8px; }
 
     /* ── Hide Streamlit chrome ────────────────────────────── */
     #MainMenu { visibility: hidden; }
@@ -124,65 +111,76 @@ st.markdown("""
 
     /* ── Expanders ────────────────────────────────────────── */
     div[data-testid="stExpander"] {
-        background: linear-gradient(135deg, #141f35, #1a2844);
-        border: 1px solid #1c3050 !important;
-        border-radius: 12px;
+        background-color: #1e2130;
+        border: 1px solid #2a2e39 !important;
+        border-radius: 8px;
     }
+    div[data-testid="stExpander"]:hover { border-color: #363a45 !important; }
 
     /* ── Buttons ──────────────────────────────────────────── */
     .stButton > button {
-        background: linear-gradient(135deg, #1a2a45, #1e3355);
-        border: 1px solid #2a4a70;
-        border-radius: 10px;
-        color: #b8d0f0 !important;
+        background-color: #2a2e39;
+        border: 1px solid #363a45;
+        border-radius: 6px;
+        color: #b2b5be !important;
+        font-size: 13px;
         font-weight: 500;
-        padding: 8px 20px;
-        transition: all 0.2s ease;
+        padding: 6px 16px;
+        transition: all 0.15s ease;
     }
     .stButton > button:hover {
-        background: linear-gradient(135deg, #1e3a60, #254878);
-        border-color: #38bdf866;
-        color: #38bdf8 !important;
-        box-shadow: 0 0 12px rgba(56,189,248,0.15);
+        background-color: #363a45;
+        border-color: #4a5060;
+        color: #d1d4dc !important;
     }
 
-    /* ── Tabs (internal use) ─────────────────────────────── */
+    /* ── Inner tabs ──────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"] {
-        background: #141f35;
-        border-radius: 10px;
-        padding: 4px;
+        background-color: #1e2130;
+        border-radius: 6px;
+        padding: 3px;
+        gap: 2px;
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        color: #7a9aba !important;
-        font-size: 13px;
+        border-radius: 4px;
+        color: #787b86 !important;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 5px 12px;
     }
     .stTabs [aria-selected="true"] {
-        background: #1e3355 !important;
-        color: #38bdf8 !important;
+        background-color: #2a2e39 !important;
+        color: #d1d4dc !important;
     }
 
-    /* ── Info / warning / success boxes ─────────────────── */
-    div[data-testid="stAlert"] {
-        border-radius: 10px !important;
-    }
+    /* ── Alerts ───────────────────────────────────────────── */
+    div[data-testid="stAlert"] { border-radius: 6px !important; }
 
     /* ── Divider ──────────────────────────────────────────── */
-    hr { border-color: #1c2d4a !important; margin: 12px 0 !important; }
+    hr { border-color: #2a2e39 !important; margin: 10px 0 !important; }
+
+    /* ── Selectbox ────────────────────────────────────────── */
+    [data-testid="stSelectbox"] > div > div {
+        background-color: #2a2e39 !important;
+        border-color: #363a45 !important;
+        border-radius: 6px !important;
+        color: #d1d4dc !important;
+        font-size: 13px !important;
+    }
 
     /* ── Page padding ─────────────────────────────────────── */
     .block-container {
-        padding-top: 1.2rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+        padding-top: 1rem !important;
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+        max-width: 100% !important;
     }
 
-    /* ── Selectbox ────────────────────────────────────────── */
-    [data-testid="stSelectbox"] > div {
-        background: #141f35 !important;
-        border-color: #1c3050 !important;
-        border-radius: 8px !important;
-    }
+    /* ── Custom scrollbar ─────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #131722; }
+    ::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #363a45; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1181,31 +1179,42 @@ def render_header(symbol, expiry, cache):
         pnl_str, pnl_col, trades = "₹0", "#888", 0
 
     st.markdown(f"""
-    <div style="background:#1a1f3a;padding:12px 20px;border-radius:10px;
-                border:1px solid #2d3250;margin-bottom:16px;
+    <div style="background:#1e2130;border:1px solid #2a2e39;border-radius:8px;
+                padding:10px 18px;margin-bottom:14px;
                 display:flex;justify-content:space-between;align-items:center;
-                flex-wrap:wrap;gap:8px;">
-        <span style="font-size:20px;font-weight:bold;color:#00d4ff;">
-            📈 NSE F&amp;O Live Dashboard
-        </span>
-        <span>
-            <span style="color:{s_color};font-weight:bold;">● {status}</span>
-            &nbsp;&nbsp;
-            <span style="color:#7fb3f5;font-weight:bold;">{symbol}</span>
-            &nbsp;|&nbsp;
-            <span style="color:#ccc;font-size:13px;">Expiry:
-                <b style="color:#00d4ff">{expiry}</b>
+                flex-wrap:wrap;gap:12px;">
+
+        <!-- Left: Symbol + Expiry -->
+        <div style="display:flex;align-items:center;gap:16px">
+            <span style="font-size:18px;font-weight:700;color:#d1d4dc">{symbol}</span>
+            <span style="background:#2a2e39;border-radius:4px;padding:3px 8px;
+                         font-size:11px;color:#787b86;font-weight:500">
+                Expiry: <b style="color:#b2b5be">{expiry}</b>
             </span>
-        </span>
-        <span>
-            <span style="color:{pnl_col};font-weight:bold;">
-                Day P&amp;L: {pnl_str}
+            <span style="display:flex;align-items:center;gap:5px;font-size:12px">
+                <span style="width:7px;height:7px;border-radius:50%;
+                             background:{s_color};display:inline-block"></span>
+                <span style="color:#787b86">{status}</span>
             </span>
-            &nbsp;|&nbsp;
-            <span style="color:#aaa;font-size:13px;">Trades: {trades}</span>
-            &nbsp;|&nbsp;
-            <span style="color:#555;font-size:12px;">🔄 {fetched}</span>
-        </span>
+        </div>
+
+        <!-- Right: P&L + refresh -->
+        <div style="display:flex;align-items:center;gap:20px">
+            <div>
+                <div style="font-size:10px;color:#4a4f5e;text-transform:uppercase;
+                             letter-spacing:0.6px">Day P&amp;L</div>
+                <div style="font-size:16px;font-weight:600;color:{pnl_col}">
+                    {pnl_str}
+                    <span style="font-size:11px;color:#4a4f5e;font-weight:400">
+                        &nbsp;({trades} trades)
+                    </span>
+                </div>
+            </div>
+            <div style="font-size:11px;color:#363a45;border-left:1px solid #2a2e39;
+                         padding-left:16px">
+                🔄 {fetched}
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -3585,18 +3594,19 @@ def render_sidebar() -> str:
     """
     sb = st.sidebar
 
-    # ── Branding ──────────────────────────────────────────────────────────────
+    # ── Branding — Sensibull style ────────────────────────────────────────────
     sb.markdown("""
-    <div style="padding:16px 8px 12px;text-align:center">
-        <div style="font-size:32px;margin-bottom:4px">📈</div>
-        <div style="font-size:15px;font-weight:700;
-                    background:linear-gradient(90deg,#38bdf8,#818cf8);
-                    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-                    letter-spacing:1.2px">
-            NSE F&O System
-        </div>
-        <div style="font-size:10px;color:#2a4060;margin-top:3px;letter-spacing:0.5px">
-            Professional Edition v2.2
+    <div style="padding:18px 12px 14px;">
+        <div style="display:flex;align-items:center;gap:10px">
+            <div style="background:#2962ff;border-radius:8px;width:32px;height:32px;
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:18px;flex-shrink:0">📈</div>
+            <div>
+                <div style="font-size:14px;font-weight:700;color:#d1d4dc;
+                            letter-spacing:0.3px">NSE F&amp;O</div>
+                <div style="font-size:10px;color:#4a4f5e;margin-top:1px">
+                    Professional v2.2</div>
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3621,8 +3631,9 @@ def render_sidebar() -> str:
     sb.divider()
 
     # ── Navigation ────────────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
-                "letter-spacing:1px;margin-bottom:6px'>Navigation</div>",
+    # ── Navigation label ──────────────────────────────────────────────────────
+    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
+                "letter-spacing:1px;padding:0 4px;margin-bottom:4px'>Menu</div>",
                 unsafe_allow_html=True)
 
     pages = [
@@ -3636,53 +3647,60 @@ def render_sidebar() -> str:
     sb.divider()
 
     # ── Today's P&L ───────────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
-                "letter-spacing:1px;margin-bottom:6px'>Today's P&L</div>",
+    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
+                "letter-spacing:1px;padding:0 4px;margin-bottom:6px'>Today</div>",
                 unsafe_allow_html=True)
     try:
         summary = st.session_state["trade_log"].get_daily_summary()
         pnl     = summary.get("gross_pnl", 0)
-        pnl_col = "#00c853" if pnl >= 0 else "#ff1744"
+        pnl_col = "#26a69a" if pnl >= 0 else "#ef5350"
+        pnl_sym = "▲" if pnl >= 0 else "▼"
         trades  = summary.get("total_trades", 0)
         wr      = summary.get("win_rate", 0)
+        wins    = summary.get("win_trades", 0)
+        losses  = summary.get("loss_trades", 0)
         sb.markdown(f"""
-        <div style="background:#131926;border:1px solid #1e2740;border-radius:10px;padding:12px">
-            <div style="font-size:22px;font-weight:700;color:{pnl_col}">
-                {'▲' if pnl>=0 else '▼'} ₹{abs(pnl):,.0f}
+        <div style="background:#131722;border:1px solid #2a2e39;border-radius:6px;
+                    padding:10px 12px;margin:0 0 4px">
+            <div style="font-size:11px;color:#4a4f5e;margin-bottom:4px">P&amp;L</div>
+            <div style="font-size:20px;font-weight:600;color:{pnl_col}">
+                {pnl_sym} ₹{abs(pnl):,.0f}
             </div>
-            <div style="display:flex;justify-content:space-between;margin-top:8px;
-                        font-size:12px;color:#666">
-                <span>Trades: <b style="color:#c9d1e0">{trades}</b></span>
-                <span>Win Rate: <b style="color:{pnl_col}">{wr:.0f}%</b></span>
+            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#4a4f5e">
+                <span>Trades <b style="color:#787b86">{trades}</b></span>
+                <span>W/L <b style="color:#26a69a">{wins}</b>/<b style="color:#ef5350">{losses}</b></span>
+                <span>WR <b style="color:{pnl_col}">{wr:.0f}%</b></span>
             </div>
         </div>
         """, unsafe_allow_html=True)
     except Exception:
         sb.markdown(
-            "<div style='color:#444;font-size:12px;text-align:center;"
-            "padding:10px'>No trades today</div>",
+            "<div style='color:#4a4f5e;font-size:11px;padding:8px 4px'>No trades today</div>",
             unsafe_allow_html=True
         )
 
     sb.divider()
 
-    # ── Connection status ─────────────────────────────────────────────────────
-    mkt        = get_market_status()   # returns string: 'OPEN','PRE-OPEN','CLOSED','WEEKEND'
+    # ── Market status ─────────────────────────────────────────────────────────
+    mkt        = get_market_status()
     mkt_open   = (mkt == "OPEN")
-    mkt_status = "🟢 Market Open" if mkt_open else ("🟡 Pre-Open" if mkt == "PRE-OPEN" else "🔴 Market Closed")
+    dot_col    = "#26a69a" if mkt_open else ("#ffd740" if mkt == "PRE-OPEN" else "#ef5350")
     now_str    = datetime.now().strftime("%H:%M:%S")
 
     sb.markdown(f"""
-    <div style="font-size:12px;padding:4px 0">
-        <div>{mkt_status}</div>
-        <div style="color:#6b7a99;font-size:11px;margin-top:4px">Last refresh: {now_str}</div>
+    <div style="padding:4px;display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <span style="width:6px;height:6px;border-radius:50%;
+                         background:{dot_col};display:inline-block"></span>
+            <span style="color:#787b86">{mkt}</span>
+        </div>
+        <span style="font-size:11px;color:#363a45">{now_str}</span>
     </div>
     """, unsafe_allow_html=True)
 
-    sb.divider()
     sb.markdown(
-        "<div style='color:#3a4460;font-size:10px;text-align:center;padding-top:4px'>"
-        "Auto-refresh: 60s &nbsp;|&nbsp; Data: Kite API</div>",
+        "<div style='color:#2a2e39;font-size:10px;text-align:center;"
+        "padding:6px 0 2px'>Kite API · 60s refresh</div>",
         unsafe_allow_html=True
     )
 
