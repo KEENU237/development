@@ -1551,6 +1551,275 @@ def render_risk(cache):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
+# MAX PAIN RENDER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_max_pain(cache: dict, symbol: str, expiry: str):
+    """
+    Max Pain Calculator panel.
+    Dikhata hai: pain chart, max pain strike, support/resistance,
+    spot vs max pain gap, expiry countdown, signal.
+    """
+    mp = cache.get("mp_result")
+
+    if not mp:
+        st.info("⏳ Max Pain loading — OI chain fetch ho rahi hai...")
+        return
+
+    # ── Expiry countdown ──────────────────────────────────────────────────────
+    try:
+        from datetime import date as _date
+        exp_date  = _date.fromisoformat(expiry)
+        days_left = (exp_date - _date.today()).days
+        if days_left < 0:
+            days_str = "Expired"
+            day_col  = "#c0392b"
+        elif days_left == 0:
+            days_str = "Today — Expiry Day!"
+            day_col  = "#c0392b"
+        elif days_left == 1:
+            days_str = "1 day left"
+            day_col  = "#e65100"
+        else:
+            days_str = f"{days_left} days left"
+            day_col  = "#1b7a2e" if days_left > 3 else "#e65100"
+    except Exception:
+        days_str = expiry
+        day_col  = "#6b7a99"
+
+    # ── Signal colors ─────────────────────────────────────────────────────────
+    sig_cfg = {
+        "BULLISH": ("#1b7a2e", "#e8f5e9", "▲ Market may drift UP to max pain"),
+        "BEARISH": ("#c0392b", "#ffeaea", "▼ Market may drift DOWN to max pain"),
+        "NEUTRAL": ("#b07c00", "#fff8e1", "→ Spot near max pain — balanced"),
+    }
+    sig_col, sig_bg, sig_desc = sig_cfg.get(mp.signal, sig_cfg["NEUTRAL"])
+
+    dist_abs = abs(mp.distance_pts)
+    dist_pct = abs(mp.distance_pct)
+
+    # Pull strength — how strong is the magnetic pull
+    if days_left <= 1:
+        pull_str  = "🔴 VERY STRONG"
+        pull_col  = "#c0392b"
+        pull_note = "Expiry day — max pain pull at its strongest"
+    elif days_left <= 2:
+        pull_str  = "🟠 STRONG"
+        pull_col  = "#e65100"
+        pull_note = "1-2 days to expiry — significant pull"
+    elif days_left <= 4:
+        pull_str  = "🟡 MODERATE"
+        pull_col  = "#b07c00"
+        pull_note = "Mid-week — pull building up"
+    else:
+        pull_str  = "⚪ WEAK"
+        pull_col  = "#8a96b0"
+        pull_note = "Far from expiry — ignore max pain for now"
+
+    # ── Header card ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="background:#f8f9fd;border:2px solid {sig_col};border-radius:12px;
+                padding:16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                    flex-wrap:wrap;gap:12px">
+            <div>
+                <span style="font-size:22px">🎯</span>
+                <span style="font-size:18px;font-weight:700;color:#1a1a2e;
+                             margin-left:8px">Max Pain</span>
+                <span style="font-size:12px;color:{day_col};font-weight:600;
+                             margin-left:12px;background:{sig_bg};padding:2px 10px;
+                             border-radius:12px">{days_str}</span>
+            </div>
+            <div style="text-align:right">
+                <div style="color:#6b7a99;font-size:11px">Max Pain Strike</div>
+                <div style="font-size:32px;font-weight:800;color:{sig_col};
+                             line-height:1.1">{int(mp.max_pain_strike):,}</div>
+                <div style="color:#6b7a99;font-size:11px">
+                    Spot {int(mp.spot):,} &nbsp;|&nbsp;
+                    Gap <b style="color:{sig_col}">{mp.distance_pts:+.0f} pts
+                    ({mp.distance_pct:+.2f}%)</b>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:12px;padding:10px;background:{sig_bg};
+                    border-left:4px solid {sig_col};border-radius:6px">
+            <span style="color:{sig_col};font-weight:600;font-size:13px">
+                {mp.signal} — {sig_desc}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px">
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;
+                        padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">
+                    🟢 SUPPORT (Max PE OI)</div>
+                <div style="font-size:20px;font-weight:700;color:#1b7a2e">
+                    {int(mp.top_pe_oi_strike):,}</div>
+                <div style="color:#8a96b0;font-size:10px">Puts ka wall</div>
+            </div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;
+                        padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">
+                    🎯 MAX PAIN</div>
+                <div style="font-size:20px;font-weight:700;color:{sig_col}">
+                    {int(mp.max_pain_strike):,}</div>
+                <div style="color:#8a96b0;font-size:10px">Writers ka sweet spot</div>
+            </div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;
+                        padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">
+                    🔴 RESISTANCE (Max CE OI)</div>
+                <div style="font-size:20px;font-weight:700;color:#c0392b">
+                    {int(mp.top_ce_oi_strike):,}</div>
+                <div style="color:#8a96b0;font-size:10px">Calls ka wall</div>
+            </div>
+        </div>
+        <div style="margin-top:10px;padding:8px 12px;background:#f8f9fd;
+                    border-radius:6px;display:flex;align-items:center;gap:10px">
+            <span style="font-size:15px">🧲</span>
+            <span style="color:#3a4a6b;font-size:12px;font-weight:600">
+                Pull Strength: <span style="color:{pull_col}">{pull_str}</span>
+                &nbsp;—&nbsp;
+            </span>
+            <span style="color:#6b7a99;font-size:11px">{pull_note}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Pain Chart ────────────────────────────────────────────────────────────
+    if mp.strikes_pain and PLOTLY_OK:
+        import plotly.graph_objects as go
+
+        strikes = [int(s) for s, _ in mp.strikes_pain]
+        pains   = [p for _, p in mp.strikes_pain]
+        min_pain = min(pains)
+
+        # Bar colors: gold for max pain, light blue for others
+        bar_colors = []
+        for s, p in mp.strikes_pain:
+            if s == mp.max_pain_strike:
+                bar_colors.append("#b8860b")   # gold — max pain
+            elif s == mp.top_ce_oi_strike:
+                bar_colors.append("#c0392b")   # red — resistance
+            elif s == mp.top_pe_oi_strike:
+                bar_colors.append("#1b7a2e")   # green — support
+            else:
+                bar_colors.append("#b0bec5")   # neutral gray
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x           = strikes,
+            y           = pains,
+            marker_color= bar_colors,
+            text        = [f"{int(s):,}" if s == mp.max_pain_strike else ""
+                           for s, _ in mp.strikes_pain],
+            textposition= "outside",
+            textfont    = dict(size=11, color="#b8860b", family="monospace"),
+            hovertemplate=(
+                "<b>Strike: %{x}</b><br>"
+                "Total Writers' Payout: %{y:,.0f}<br>"
+                "<extra></extra>"
+            ),
+            name="Pain",
+        ))
+
+        # Spot vertical line
+        fig.add_vline(
+            x          = mp.spot,
+            line_dash  = "dash",
+            line_color = "#1a56db",
+            line_width = 2,
+            annotation_text      = f"Spot {int(mp.spot):,}",
+            annotation_font_size = 11,
+            annotation_font_color= "#1a56db",
+            annotation_position  = "top right",
+        )
+
+        # Max Pain vertical line (solid gold)
+        fig.add_vline(
+            x          = mp.max_pain_strike,
+            line_dash  = "solid",
+            line_color = "#b8860b",
+            line_width = 2,
+            annotation_text      = f"Max Pain {int(mp.max_pain_strike):,}",
+            annotation_font_size = 11,
+            annotation_font_color= "#b8860b",
+            annotation_position  = "top left",
+        )
+
+        fig.update_layout(
+            paper_bgcolor = "#ffffff",
+            plot_bgcolor  = "#f8f9fd",
+            font          = dict(color="#3a4a6b", size=10),
+            xaxis         = dict(
+                title     = "Strike Price",
+                gridcolor = "#e0e4ef",
+                tickformat= "d",
+                dtick     = 100 if symbol == "NIFTY" else 200,
+            ),
+            yaxis         = dict(
+                title     = "Total Writers' Payout (₹ OI units)",
+                gridcolor = "#e0e4ef",
+                tickformat= ".2s",
+            ),
+            height        = 360,
+            margin        = dict(l=10, r=10, t=40, b=40),
+            showlegend    = False,
+            bargap        = 0.15,
+        )
+
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False})
+
+        # Legend below chart
+        st.markdown("""
+        <div style="display:flex;gap:20px;font-size:11px;color:#6b7a99;
+                    padding:6px 12px;background:#f0f3fa;border-radius:6px;
+                    flex-wrap:wrap">
+            <span>&#9646; <b style="color:#b8860b">Gold bar</b> = Max Pain (minimum payout)</span>
+            <span>&#9646; <b style="color:#1b7a2e">Green bar</b> = Max PE OI (Support)</span>
+            <span>&#9646; <b style="color:#c0392b">Red bar</b> = Max CE OI (Resistance)</span>
+            <span>&#9646; <b style="color:#1a56db">Blue line</b> = Current Spot</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    elif not PLOTLY_OK:
+        st.info("Plotly install karo chart ke liye: `pip install plotly`")
+
+    # ── How it works ─────────────────────────────────────────────────────────
+    with st.expander("📖 Max Pain kya hai aur kaise use karein (click to expand)"):
+        st.markdown("""
+**Max Pain Theory:**
+Option writers (sellers) control huge OI. Market has a tendency to expire near the strike
+where maximum option buyers lose money — that's the **Max Pain strike**.
+
+**Formula:**
+```
+For each candidate strike P:
+  Pain = Σ [ max(P−K, 0) × CE_OI(K) ]  +  Σ [ max(K−P, 0) × PE_OI(K) ]
+Max Pain = Strike P where Pain is MINIMUM
+```
+
+**How to use:**
+
+| Scenario | Action |
+|---|---|
+| Spot < Max Pain + Pull Strong | Market may drift UP — favour CE buyers |
+| Spot > Max Pain + Pull Strong | Market may drift DOWN — favour PE buyers |
+| Spot ≈ Max Pain | Straddle/Strangle sell — range bound expected |
+| Pull = WEAK (>4 days) | Ignore max pain — follow GEX + PCR instead |
+
+**Key Rule:**
+Max Pain is most reliable in the **last 2 days before expiry** (Wed-Thu for weekly NIFTY).
+On Monday/Tuesday, treat it as one of many signals — not the primary one.
+
+**Support & Resistance from OI:**
+- **Max PE OI strike** = Strongest Put writing = institutional support floor
+- **Max CE OI strike** = Strongest Call writing = institutional resistance ceiling
+- Price tends to stay between these two strikes before expiry
+        """)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GEX RENDER
 # ══════════════════════════════════════════════════════════════════════════════
 def render_gex(cache: dict):
@@ -2866,6 +3135,12 @@ def live_data_section(symbol, expiry):
     with col_iv:
         st.markdown("### 🎯 IV Rank · Greeks · Skew")
         render_iv(cache)
+
+    st.divider()
+
+    # ── Max Pain Panel ────────────────────────────────────────────────────────
+    st.markdown("### 🎯 Max Pain Calculator")
+    render_max_pain(cache, symbol, expiry)
 
     st.divider()
 
