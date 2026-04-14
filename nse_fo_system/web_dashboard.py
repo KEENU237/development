@@ -1311,16 +1311,16 @@ def render_uoa(cache):
     alerts = cache.get("uoa_alerts", [])
     if not alerts:
         st.markdown("""
-        <div style="background:#1e2130;border-radius:8px;padding:20px;text-align:center">
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:20px;text-align:center">
             <div style="font-size:28px">📡</div>
-            <div style="color:#ffd740;font-weight:bold;margin-top:8px">
+            <div style="color:#b8860b;font-weight:bold;margin-top:8px">
                 Baseline collect ho rahi hai...
             </div>
-            <div style="color:#888;font-size:12px;margin-top:6px">
+            <div style="color:#6b7a99;font-size:12px;margin-top:6px">
                 Pehli scan mein volume baseline set hoti hai.<br>
                 60 seconds mein 2x+ unusual activity alerts aayenge.
             </div>
-            <div style="color:#555;font-size:11px;margin-top:8px">
+            <div style="color:#8a96b0;font-size:11px;margin-top:8px">
                 Threshold: 2x = Unusual &nbsp;|&nbsp; 5x = 🔥 Fire
             </div>
         </div>
@@ -1360,18 +1360,18 @@ def render_uoa(cache):
 
     # ── Legend / Guide ─────────────────────────────────────────────────────────
     st.markdown("""
-    <div style="background:#1a1f35;border-radius:8px;padding:12px 16px;margin-top:8px;
+    <div style="background:#f0f4ff;border:1px solid #d0d8f0;border-radius:8px;padding:12px 16px;margin-top:8px;
                 font-size:12px;line-height:1.9">
-        <span style="color:#aaa;font-weight:bold">SIGNAL GUIDE &nbsp;|&nbsp; </span>
-        <span style="color:#ff9800">&#9888; DEEP ITM — INSTITUTIONAL</span>
-        <span style="color:#666"> &nbsp;= 5%+ ITM &rarr; Hedge/Roll. Retail ke liye NOT actionable directly.</span>
+        <span style="color:#3a4a6b;font-weight:bold">SIGNAL GUIDE &nbsp;|&nbsp; </span>
+        <span style="color:#e65100">&#9888; DEEP ITM — INSTITUTIONAL</span>
+        <span style="color:#6b7a99"> &nbsp;= 5%+ ITM &rarr; Hedge/Roll. Retail ke liye NOT actionable directly.</span>
         &nbsp;&nbsp;
-        <span style="color:#40c4ff">&#9679; MILD ITM</span>
-        <span style="color:#666"> = 2-5% ITM &rarr; Strong conviction but protected entry.</span>
+        <span style="color:#0077cc">&#9679; MILD ITM</span>
+        <span style="color:#6b7a99"> = 2-5% ITM &rarr; Strong conviction but protected entry.</span>
         &nbsp;&nbsp;
-        <span style="color:#00c853">&#9679; BULLISH / </span>
-        <span style="color:#ff1744">&#9679; BEARISH</span>
-        <span style="color:#666"> = ATM/OTM &rarr; Pure directional. Most actionable for retail.</span>
+        <span style="color:#1b7a2e">&#9679; BULLISH / </span>
+        <span style="color:#c0392b">&#9679; BEARISH</span>
+        <span style="color:#6b7a99"> = ATM/OTM &rarr; Pure directional. Most actionable for retail.</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1386,17 +1386,17 @@ def render_pcr(cache):
     for sym in ["NIFTY", "BANKNIFTY"]:
         if sym not in pcr_data:
             st.markdown(
-                f'<div style="background:#1e2130;border-radius:8px;padding:12px;'
-                f'margin-bottom:8px;color:#555;">{sym} — fetching...</div>',
+                f'<div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:12px;'
+                f'margin-bottom:8px;color:#8a96b0;">{sym} — fetching...</div>',
                 unsafe_allow_html=True)
             continue
         r, trend = pcr_data[sym]
         color     = zone_col.get(r.zone, "#888")
         trend_ico = {"▲": "🟢 ▲", "▼": "🔴 ▼", "→": "⚪ →"}.get(trend, "")
         st.markdown(f"""
-        <div style="background:#1e2130;border:1px solid #2d3250;
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;
                     border-radius:8px;padding:12px;margin-bottom:8px;">
-            <b style="color:#fff;font-size:15px">{sym}</b>
+            <b style="color:#1a1a2e;font-size:15px">{sym}</b>
             &nbsp;&nbsp;
             <span style="font-size:24px;font-weight:bold;color:{color}">{r.pcr:.2f}</span>
             &nbsp;{trend_ico}&nbsp;
@@ -1404,7 +1404,7 @@ def render_pcr(cache):
                          padding:2px 10px;border-radius:10px;
                          font-size:12px">{r.zone}</span>
             <br/>
-            <span style="color:#aaa;font-size:12px">
+            <span style="color:#6b7a99;font-size:12px">
                 Signal: {r.signal} &nbsp;|&nbsp; Strategy: {r.strategy}
             </span>
         </div>
@@ -1442,22 +1442,22 @@ def render_iv(cache):
     with c2:
         st.markdown("**IV Rank & Skew**")
         st.markdown(f"""
-        <div style="background:#1e2130;border-radius:8px;padding:12px;margin-bottom:6px">
-            <div style="color:#aaa;font-size:12px">IV Rank</div>
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:12px;margin-bottom:6px">
+            <div style="color:#6b7a99;font-size:12px">IV Rank</div>
             <div style="font-size:28px;font-weight:bold;color:{ivr_c}">{ivr:.0f}%</div>
             <div style="color:{ivr_c};font-size:12px">{ivr_t}</div>
         </div>
-        <div style="background:#1e2130;border-radius:8px;padding:12px;margin-bottom:6px">
-            <div style="color:#aaa;font-size:12px">IV Skew (PE−CE)</div>
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:12px;margin-bottom:6px">
+            <div style="color:#6b7a99;font-size:12px">IV Skew (PE−CE)</div>
             <div style="font-size:22px;font-weight:bold;color:{sk_c}">{skew:+.2f}%</div>
             <div style="color:{sk_c};font-size:12px">{sk_t}</div>
         </div>
-        <div style="background:#1e2130;border-radius:8px;padding:12px">
-            <div style="color:#aaa;font-size:12px">⏰ Theta Clock</div>
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:12px">
+            <div style="color:#6b7a99;font-size:12px">⏰ Theta Clock</div>
             <div style="font-size:20px;font-weight:bold;color:{th_c}">
                 ₹{abs(theta):,.0f}/day
             </div>
-            <div style="color:#555;font-size:11px">7d ≈ ₹{abs(theta)*7:,.0f}</div>
+            <div style="color:#8a96b0;font-size:11px">7d ≈ ₹{abs(theta)*7:,.0f}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1502,9 +1502,9 @@ def render_risk(cache):
 
     if not snap or snap.open_positions == 0:
         st.markdown("""
-        <div style="background:#1e2130;border-radius:8px;padding:24px;text-align:center">
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;padding:24px;text-align:center">
             <div style="font-size:36px">📭</div>
-            <div style="color:#aaa;margin-top:8px">No open positions</div>
+            <div style="color:#6b7a99;margin-top:8px">No open positions</div>
         </div>""", unsafe_allow_html=True)
     else:
         mu    = snap.margin_utilization
@@ -1517,20 +1517,20 @@ def render_risk(cache):
         with c1:
             st.markdown(f"""
             <table style="width:100%;font-size:13px;border-collapse:collapse">
-            <tr><td style="color:#aaa;padding:4px">Net Delta</td>
+            <tr><td style="color:#6b7a99;padding:4px">Net Delta</td>
                 <td style="color:{dc};font-weight:bold;text-align:right">
                     {snap.net_delta:+.4f}</td></tr>
-            <tr><td style="color:#aaa;padding:4px">Net Theta</td>
+            <tr><td style="color:#6b7a99;padding:4px">Net Theta</td>
                 <td style="color:{tc};font-weight:bold;text-align:right">
                     ₹{snap.net_theta:+,.0f}/day</td></tr>
-            <tr><td style="color:#aaa;padding:4px">Net Vega</td>
-                <td style="color:#7fb3f5;font-weight:bold;text-align:right">
+            <tr><td style="color:#6b7a99;padding:4px">Net Vega</td>
+                <td style="color:#1a56db;font-weight:bold;text-align:right">
                     {snap.net_vega:+,.0f}</td></tr>
-            <tr><td style="color:#aaa;padding:4px">Unrealised P&amp;L</td>
+            <tr><td style="color:#6b7a99;padding:4px">Unrealised P&amp;L</td>
                 <td style="color:{pc};font-weight:bold;text-align:right">
                     ₹{snap.unrealized_pnl:+,.0f}</td></tr>
-            <tr><td style="color:#aaa;padding:4px">Positions</td>
-                <td style="color:#fff;font-weight:bold;text-align:right">
+            <tr><td style="color:#6b7a99;padding:4px">Positions</td>
+                <td style="color:#1a1a2e;font-weight:bold;text-align:right">
                     {snap.open_positions}</td></tr>
             </table>""", unsafe_allow_html=True)
         with c2:
@@ -1571,7 +1571,7 @@ def render_gex(cache: dict):
 
     # ── Header card ──────────────────────────────────────────────────────────
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid {color};border-radius:12px;
+    <div style="background:#f8f9fd;border:2px solid {color};border-radius:12px;
                 padding:16px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
@@ -1580,35 +1580,35 @@ def render_gex(cache: dict):
                              margin-left:8px">{regime}</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">Net GEX (Cr)</div>
+                <div style="color:#6b7a99;font-size:11px">Net GEX (Cr)</div>
                 <div style="font-size:24px;font-weight:bold;color:{color}">
                     {"+" if total >= 0 else ""}{total:.2f}
                 </div>
             </div>
         </div>
-        <div style="color:#888;font-size:12px;margin-top:8px">{desc}</div>
+        <div style="color:#6b7a99;font-size:12px;margin-top:8px">{desc}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;
                     gap:8px;margin-top:12px">
-            <div style="background:#ffffff11;border-radius:8px;padding:8px;
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:8px;
                          text-align:center">
-                <div style="color:#aaa;font-size:10px">🧲 Gamma Wall</div>
-                <div style="font-size:16px;font-weight:bold;color:#ffd740">
+                <div style="color:#6b7a99;font-size:10px">🧲 Gamma Wall</div>
+                <div style="font-size:16px;font-weight:bold;color:#b8860b">
                     {wall:,}</div>
-                <div style="color:#555;font-size:10px">Strongest magnet</div>
+                <div style="color:#8a96b0;font-size:10px">Strongest magnet</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:8px;
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:8px;
                          text-align:center">
-                <div style="color:#aaa;font-size:10px">🔄 Flip Level</div>
-                <div style="font-size:16px;font-weight:bold;color:#7fb3f5">
+                <div style="color:#6b7a99;font-size:10px">🔄 Flip Level</div>
+                <div style="font-size:16px;font-weight:bold;color:#1a56db">
                     {flip if flip else "—"}</div>
-                <div style="color:#555;font-size:10px">GEX zero crossing</div>
+                <div style="color:#8a96b0;font-size:10px">GEX zero crossing</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:8px;
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:8px;
                          text-align:center">
-                <div style="color:#aaa;font-size:10px">📍 Spot</div>
-                <div style="font-size:16px;font-weight:bold;color:#fff">
+                <div style="color:#6b7a99;font-size:10px">📍 Spot</div>
+                <div style="font-size:16px;font-weight:bold;color:#1a1a2e">
                     {spot:,.0f}</div>
-                <div style="color:#555;font-size:10px">
+                <div style="color:#8a96b0;font-size:10px">
                     {"Above Wall" if spot > wall else "Below Wall"}</div>
             </div>
         </div>
@@ -2202,45 +2202,45 @@ def render_volume_profile(cache: dict, symbol: str):
 
     st.markdown(f"""
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:10px 0 16px 0">
-        <div style="background:#1a1a3a;border-top:3px solid #ffd740;
+        <div style="background:#fffbf0;border-top:3px solid #b8860b;
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">POC</div>
-            <div style="color:#ffd740;font-size:20px;font-weight:bold">{poc}</div>
-            <div style="color:#555;font-size:10px">Point of Control</div>
-            <div style="color:#888;font-size:10px">{vp['poc_volume_pct']}% volume</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">POC</div>
+            <div style="color:#b8860b;font-size:20px;font-weight:bold">{poc}</div>
+            <div style="color:#8a96b0;font-size:10px">Point of Control</div>
+            <div style="color:#6b7a99;font-size:10px">{vp['poc_volume_pct']}% volume</div>
         </div>
-        <div style="background:#1a1a3a;border-top:3px solid #00c8ff;
+        <div style="background:#f0f8ff;border-top:3px solid #1a56db;
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">VAH</div>
-            <div style="color:#00c8ff;font-size:20px;font-weight:bold">{vah}</div>
-            <div style="color:#555;font-size:10px">Value Area High</div>
-            <div style="color:#888;font-size:10px">Upper boundary</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">VAH</div>
+            <div style="color:#1a56db;font-size:20px;font-weight:bold">{vah}</div>
+            <div style="color:#8a96b0;font-size:10px">Value Area High</div>
+            <div style="color:#6b7a99;font-size:10px">Upper boundary</div>
         </div>
-        <div style="background:#1a1a3a;border-top:3px solid #00c8ff;
+        <div style="background:#f0f8ff;border-top:3px solid #1a56db;
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">VAL</div>
-            <div style="color:#00c8ff;font-size:20px;font-weight:bold">{val}</div>
-            <div style="color:#555;font-size:10px">Value Area Low</div>
-            <div style="color:#888;font-size:10px">Lower boundary</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">VAL</div>
+            <div style="color:#1a56db;font-size:20px;font-weight:bold">{val}</div>
+            <div style="color:#8a96b0;font-size:10px">Value Area Low</div>
+            <div style="color:#6b7a99;font-size:10px">Lower boundary</div>
         </div>
-        <div style="background:#1a1a3a;border-top:3px solid #ffffff33;
+        <div style="background:#f8f9fd;border-top:3px solid #3a4a6b;
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">SPOT</div>
-            <div style="color:#ffffff;font-size:20px;font-weight:bold">{spot_str}</div>
-            <div style="color:#555;font-size:10px">Current Price</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">SPOT</div>
+            <div style="color:#1a1a2e;font-size:20px;font-weight:bold">{spot_str}</div>
+            <div style="color:#8a96b0;font-size:10px">Current Price</div>
         </div>
-        <div style="background:#1a1a3a;border-top:3px solid {vp_sig[1]};
+        <div style="background:#f8f9fd;border-top:3px solid {vp_sig[1]};
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">SIGNAL</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">SIGNAL</div>
             <div style="color:{vp_sig[1]};font-size:14px;font-weight:bold">{vp_sig[0]}</div>
-            <div style="color:#555;font-size:10px">Price vs POC</div>
+            <div style="color:#8a96b0;font-size:10px">Price vs POC</div>
         </div>
-        <div style="background:#1a1a3a;border-top:3px solid #555;
+        <div style="background:#f8f9fd;border-top:3px solid #c8d0e8;
                     border-radius:8px;padding:10px;text-align:center">
-            <div style="color:#888;font-size:10px;letter-spacing:1px">VOLUME</div>
-            <div style="color:#aaa;font-size:18px;font-weight:bold">{total_vol_str}</div>
-            <div style="color:#555;font-size:10px">{vp['candle_count']} candles</div>
-            <div style="color:#555;font-size:10px">VA: {vp['va_volume_pct']}%</div>
+            <div style="color:#6b7a99;font-size:10px;letter-spacing:1px">VOLUME</div>
+            <div style="color:#3a4a6b;font-size:18px;font-weight:bold">{total_vol_str}</div>
+            <div style="color:#8a96b0;font-size:10px">{vp['candle_count']} candles</div>
+            <div style="color:#8a96b0;font-size:10px">VA: {vp['va_volume_pct']}%</div>
         </div>
     </div>""", unsafe_allow_html=True)
 
@@ -2277,10 +2277,10 @@ def render_volume_profile(cache: dict, symbol: str):
             label_colors.append("#1a1a1a")  # dark on gold
             label_positions.append("inside")
         elif bar_pct > 0.35:               # wide bar → text inside
-            label_colors.append("#ffffff")
+            label_colors.append("#1a1a2e")
             label_positions.append("inside")
         else:                              # narrow bar → text outside
-            label_colors.append("#aaaaaa")
+            label_colors.append("#6b7a99")
             label_positions.append("outside")
 
     fig = go.Figure()
@@ -2329,14 +2329,14 @@ def render_volume_profile(cache: dict, symbol: str):
                        text=f"VAL {val}", showarrow=False,
                        font=dict(color="#00C8FF", size=10), xanchor="left")
 
-    # Spot price line — white solid
+    # Spot price line — dark solid
     if spot:
         fig.add_shape(type="line", x0=0, x1=1, xref="paper",
                       y0=spot, y1=spot,
-                      line=dict(color="rgba(255,255,255,0.9)", width=2))
+                      line=dict(color="rgba(26,26,46,0.85)", width=2))
         fig.add_annotation(x=1.01, xref="paper", y=spot,
                            text=f"<b>▶ {spot:.0f}</b>", showarrow=False,
-                           font=dict(color="#FFFFFF", size=11), xanchor="left")
+                           font=dict(color="#1a1a2e", size=11), xanchor="left")
 
     # Layout — Y-axis range must include spot price too
     y_min = min(levels) - step_sz * 3
@@ -2346,19 +2346,19 @@ def render_volume_profile(cache: dict, symbol: str):
         y_max = max(y_max, spot + step_sz * 5)
     visible_range = [y_min, y_max]
     fig.update_layout(
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#141820",
-        font=dict(color="#aaaaaa", size=10, family="monospace"),
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#f8f9fd",
+        font=dict(color="#3a4a6b", size=10, family="monospace"),
         xaxis=dict(
             title="Volume",
-            gridcolor="#1e2130",
+            gridcolor="#e0e4ef",
             showgrid=True,
             zeroline=False,
             tickformat=".2s",          # 1.2M, 450K etc.
         ),
         yaxis=dict(
             title="Price",
-            gridcolor="#1e2130",
+            gridcolor="#e0e4ef",
             showgrid=True,
             range=visible_range,
             dtick=step_sz * 5,
@@ -2373,11 +2373,11 @@ def render_volume_profile(cache: dict, symbol: str):
 
     # ── Signal interpretation box ─────────────────────────────────────────────
     st.markdown(f"""
-    <div style="background:#ffffff0a;border-left:4px solid {vp_sig[1]};
+    <div style="background:#f0f3fa;border-left:4px solid {vp_sig[1]};
                 border-radius:6px;padding:10px 16px;margin-top:2px">
         <span style="color:{vp_sig[1]};font-weight:bold;font-size:13px">
             {vp_sig[0]} &nbsp;—&nbsp;</span>
-        <span style="color:#ccc;font-size:12px">{vp_sig[2]}</span>
+        <span style="color:#3a4a6b;font-size:12px">{vp_sig[2]}</span>
     </div>""", unsafe_allow_html=True)
 
     # ── How to use expander ───────────────────────────────────────────────────
@@ -2749,11 +2749,11 @@ def _render_alert_history():
         rows_html += (
             f"<div style='display:flex;align-items:center;gap:10px;"
             f"padding:6px 10px;border-left:3px solid {col};"
-            f"background:#1a1f35;border-radius:4px;margin-bottom:4px'>"
+            f"background:#f0f3fa;border-radius:4px;margin-bottom:4px'>"
             f"<span style='color:{col};font-size:13px'>{emoji}</span>"
-            f"<span style='color:#aaa;font-size:11px;min-width:38px'>{a.time}</span>"
-            f"<span style='color:#fff;font-size:12px;font-weight:600'>{a.title}</span>"
-            f"<span style='color:#555;font-size:11px;margin-left:auto'>{a.category}</span>"
+            f"<span style='color:#6b7a99;font-size:11px;min-width:38px'>{a.time}</span>"
+            f"<span style='color:#1a1a2e;font-size:12px;font-weight:600'>{a.title}</span>"
+            f"<span style='color:#8a96b0;font-size:11px;margin-left:auto'>{a.category}</span>"
             f"</div>"
         )
 
@@ -2923,38 +2923,38 @@ def render_smi(smi: dict):
     sig_c  = smi['sig_color']
 
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid {sig_c};border-radius:12px;padding:16px;margin-bottom:12px">
+    <div style="background:#f8f9fd;border:2px solid {sig_c};border-radius:12px;padding:16px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
                 <span style="font-size:22px">&#129504;</span>
-                <span style="font-size:18px;font-weight:bold;color:#fff;margin-left:8px">Smart Money Index</span>
+                <span style="font-size:18px;font-weight:bold;color:#1a1a2e;margin-left:8px">Smart Money Index</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">Today's SMI</div>
+                <div style="color:#6b7a99;font-size:11px">Today's SMI</div>
                 <div style="font-size:26px;font-weight:bold;color:{chg_col}">{smi['smi']:,.0f}</div>
                 <div style="color:{chg_col};font-size:12px">{chg_ico} {abs(chg):.1f} from yesterday</div>
             </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px">
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">Morning Move (9:15-9:45)</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">Morning Move (9:15-9:45)</div>
                 <div style="font-size:18px;font-weight:bold;color:{m_col}">{smi['morning_move']:+.1f}</div>
-                <div style="color:#555;font-size:10px">Retail / Emotional</div>
+                <div style="color:#8a96b0;font-size:10px">Retail / Emotional</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">Evening Move (3:00-3:30)</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">Evening Move (3:00-3:30)</div>
                 <div style="font-size:18px;font-weight:bold;color:{e_col}">{smi['evening_move']:+.1f}</div>
-                <div style="color:#555;font-size:10px">Smart Money</div>
+                <div style="color:#8a96b0;font-size:10px">Smart Money</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">5-Day Trend</div>
-                <div style="font-size:16px;font-weight:bold;color:#7fb3f5">{smi['trend']}</div>
-                <div style="color:#555;font-size:10px">Institutional bias</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">5-Day Trend</div>
+                <div style="font-size:16px;font-weight:bold;color:#1a56db">{smi['trend']}</div>
+                <div style="color:#8a96b0;font-size:10px">Institutional bias</div>
             </div>
         </div>
         <div style="margin-top:12px;padding:10px;background:{sig_c}22;border-left:4px solid {sig_c};border-radius:4px">
             <div style="color:{sig_c};font-weight:bold;font-size:13px">{smi['signal']}</div>
-            <div style="color:#888;font-size:12px;margin-top:4px">Tomorrow Bias: <b style="color:{t_col}">{smi['tomorrow']}</b></div>
+            <div style="color:#6b7a99;font-size:12px;margin-top:4px">Tomorrow Bias: <b style="color:{t_col}">{smi['tomorrow']}</b></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -2999,36 +2999,36 @@ def render_gamma_acceleration(ga: dict):
     flip_str  = f"{flip_mins}m" if flip_mins else "&#8212;"
 
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid {dir_c};border-radius:12px;padding:16px;margin-bottom:12px">
+    <div style="background:#f8f9fd;border:2px solid {dir_c};border-radius:12px;padding:16px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
                 <span style="font-size:22px">&#9889;</span>
-                <span style="font-size:18px;font-weight:bold;color:#fff;margin-left:8px">Gamma Acceleration</span>
+                <span style="font-size:18px;font-weight:bold;color:#1a1a2e;margin-left:8px">Gamma Acceleration</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">Current GEX</div>
+                <div style="color:#6b7a99;font-size:11px">Current GEX</div>
                 <div style="font-size:22px;font-weight:bold;color:{dir_c}">{gex_sign}{ga['current']:.2f} Cr</div>
             </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px">
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">Change Rate</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">Change Rate</div>
                 <div style="font-size:18px;font-weight:bold;color:{rate_col}">{rate_sign}{ga['rate']:.2f}</div>
-                <div style="color:#555;font-size:10px">Cr / minute</div>
+                <div style="color:#8a96b0;font-size:10px">Cr / minute</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">Direction</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">Direction</div>
                 <div style="font-size:15px;font-weight:bold;color:{dir_c}">{ga['direction']}</div>
-                <div style="color:#555;font-size:10px">{ga['readings']} readings</div>
+                <div style="color:#8a96b0;font-size:10px">{ga['readings']} readings</div>
             </div>
-            <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:10px">Flip ETA</div>
+            <div style="background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:10px">Flip ETA</div>
                 <div style="font-size:18px;font-weight:bold;color:{flip_col}">{flip_str}</div>
-                <div style="color:#555;font-size:10px">Mins to regime change</div>
+                <div style="color:#8a96b0;font-size:10px">Mins to regime change</div>
             </div>
         </div>
         <div style="margin-top:12px">
-            <div style="color:#555;font-size:10px;margin-bottom:4px">Session decay: {decay:.0f}%</div>
+            <div style="color:#8a96b0;font-size:10px;margin-bottom:4px">Session decay: {decay:.0f}%</div>
             <div style="font-family:monospace;color:{dir_c};font-size:12px">{bar_str} {decay:.0f}%</div>
         </div>
     </div>
@@ -3084,12 +3084,12 @@ def render_pin_probability(pin: dict, symbol: str):
         bar_filled = "█" * bar_len + "░" * (20 - bar_len)
         is_top      = (s == top)
         is_near     = bool(spot) and abs(s - spot) <= 50
-        bar_col     = "#ffd740" if is_top else ("#00c8ff" if is_near else "#3a5a8a")
+        bar_col     = "#b8860b" if is_top else ("#1a56db" if is_near else "#3a5a8a")
         label       = (f"&#9733; {s:,}" if is_top else
                        f"&#9658; {s:,}" if is_near else f"&nbsp;&nbsp;{s:,}")
         bars_html  += (
             f"<div style='display:flex;align-items:center;gap:10px;margin:4px 0'>"
-            f"<span style='color:#aaa;font-size:11px;width:80px'>{label}</span>"
+            f"<span style='color:#3a4a6b;font-size:11px;width:80px'>{label}</span>"
             f"<span style='font-family:monospace;color:{bar_col};font-size:11px'>{bar_filled}</span>"
             f"<span style='color:{bar_col};font-size:12px;font-weight:bold;margin-left:6px'>"
             f"{prob:.1f}%</span>"
@@ -3107,17 +3107,17 @@ def render_pin_probability(pin: dict, symbol: str):
 
     # Single render call — no split divs
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid #7fb3f5;
+    <div style="background:#f8f9fd;border:2px solid #1a56db;
                 border-radius:12px;padding:16px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;
                     margin-bottom:12px">
             <div>
                 <span style="font-size:22px">&#127919;</span>
-                <span style="font-size:18px;font-weight:bold;color:#fff;margin-left:8px">
+                <span style="font-size:18px;font-weight:bold;color:#1a1a2e;margin-left:8px">
                     Expiry Pin Probability</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">Most Likely Pin</div>
+                <div style="color:#6b7a99;font-size:11px">Most Likely Pin</div>
                 <div style="font-size:26px;font-weight:bold;color:{top_col}">{top:,}</div>
                 <div style="color:{top_col};font-size:12px">{top_prob:.1f}% probability</div>
             </div>
@@ -3163,43 +3163,43 @@ def render_expected_move(em: dict, symbol: str):
     tone_c = em['tone_col']
 
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid {tone_c};border-radius:12px;padding:16px;margin-bottom:12px">
+    <div style="background:#f8f9fd;border:2px solid {tone_c};border-radius:12px;padding:16px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
                 <span style="font-size:22px">&#128208;</span>
-                <span style="font-size:18px;font-weight:bold;color:#fff;margin-left:8px">Expected Move &#8212; This Expiry</span>
+                <span style="font-size:18px;font-weight:bold;color:#1a1a2e;margin-left:8px">Expected Move &#8212; This Expiry</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">ATM Straddle Value</div>
-                <div style="font-size:28px;font-weight:bold;color:#ffd740">&#8377;{em['straddle']:.0f}</div>
-                <div style="color:#aaa;font-size:11px">&#177;{em['move_pct']:.2f}% of spot</div>
+                <div style="color:#6b7a99;font-size:11px">ATM Straddle Value</div>
+                <div style="font-size:28px;font-weight:bold;color:#b8860b">&#8377;{em['straddle']:.0f}</div>
+                <div style="color:#6b7a99;font-size:11px">&#177;{em['move_pct']:.2f}% of spot</div>
             </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-            <div style="background:#ff6d0022;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:11px">ATM {em['atm']} CE</div>
-                <div style="color:#ff6d00;font-size:22px;font-weight:bold">&#8377;{em['ce_ltp']:.0f}</div>
+            <div style="background:#fff5f0;border:1px solid #ffccaa;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:11px">ATM {em['atm']} CE</div>
+                <div style="color:#c0392b;font-size:22px;font-weight:bold">&#8377;{em['ce_ltp']:.0f}</div>
             </div>
-            <div style="background:#00c85322;border-radius:8px;padding:10px;text-align:center">
-                <div style="color:#aaa;font-size:11px">ATM {em['atm']} PE</div>
-                <div style="color:#00c853;font-size:22px;font-weight:bold">&#8377;{em['pe_ltp']:.0f}</div>
+            <div style="background:#f0fff4;border:1px solid #aaecc0;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#6b7a99;font-size:11px">ATM {em['atm']} PE</div>
+                <div style="color:#1b7a2e;font-size:22px;font-weight:bold">&#8377;{em['pe_ltp']:.0f}</div>
             </div>
         </div>
-        <div style="margin-top:14px;padding:12px;background:#0e1117;border-radius:8px">
+        <div style="margin-top:14px;padding:12px;background:#f0f3fa;border:1px solid #e0e4ef;border-radius:8px">
             <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px">
-                <span style="color:#ff1744;font-weight:bold">&#128308; Lower: {em['lower']:,.0f}</span>
-                <span style="color:#fff">Spot: {spot:,.0f}</span>
-                <span style="color:#00c853;font-weight:bold">&#128994; Upper: {em['upper']:,.0f}</span>
+                <span style="color:#c0392b;font-weight:bold">&#128308; Lower: {em['lower']:,.0f}</span>
+                <span style="color:#1a1a2e;font-weight:600">Spot: {spot:,.0f}</span>
+                <span style="color:#1b7a2e;font-weight:bold">&#128994; Upper: {em['upper']:,.0f}</span>
             </div>
-            <div style="background:#1565c0;border-radius:4px;height:10px;position:relative;opacity:0.7"></div>
-            <div style="text-align:center;color:#7fb3f5;font-size:11px;margin-top:6px">
+            <div style="background:#1a56db;border-radius:4px;height:10px;position:relative;opacity:0.5"></div>
+            <div style="text-align:center;color:#1a56db;font-size:11px;margin-top:6px">
                 85% probability NIFTY stays within &#177;{em['straddle']:.0f} pts this expiry
             </div>
         </div>
-        <div style="margin-top:12px;padding:10px;background:#7fb3f522;border-left:4px solid #7fb3f5;border-radius:4px">
-            <div style="color:#7fb3f5;font-size:12px;font-weight:bold">&#128176; Iron Condor &#8212; Just outside expected move:</div>
-            <div style="color:#fff;font-size:13px;margin-top:6px">
-                SELL {em['ic_ce']} CE @ &#8377;{em['ic_ce_prem']:.0f} &nbsp;+&nbsp; SELL {em['ic_pe']} PE @ &#8377;{em['ic_pe_prem']:.0f} &nbsp;=&nbsp; <span style="color:#ffd740;font-weight:bold">&#8377;{em['ic_total']:.0f} total premium</span>
+        <div style="margin-top:12px;padding:10px;background:#e8f0fe;border-left:4px solid #1a56db;border-radius:4px">
+            <div style="color:#1a56db;font-size:12px;font-weight:bold">&#128176; Iron Condor &#8212; Just outside expected move:</div>
+            <div style="color:#1a1a2e;font-size:13px;margin-top:6px">
+                SELL {em['ic_ce']} CE @ &#8377;{em['ic_ce_prem']:.0f} &nbsp;+&nbsp; SELL {em['ic_pe']} PE @ &#8377;{em['ic_pe_prem']:.0f} &nbsp;=&nbsp; <span style="color:#b8860b;font-weight:bold">&#8377;{em['ic_total']:.0f} total premium</span>
             </div>
         </div>
         <div style="margin-top:10px;color:{tone_c};font-size:12px"><b>{em['tone']}</b> &#8212; {em['advice']}</div>
@@ -3248,44 +3248,44 @@ def render_cross_assets(cross: dict):
         col = sig["color"]
         rows_html += (
             f"<div style='display:flex;align-items:center;gap:10px;padding:8px 10px;"
-            f"margin:4px 0;background:#ffffff08;border-radius:6px;"
+            f"margin:4px 0;background:#f0f3fa;border-radius:6px;"
             f"border-left:3px solid {col}'>"
             f"<span style='font-size:18px'>{sig['icon']}</span>"
-            f"<span style='color:#ccc;font-size:13px;flex:1'>{sig['name']}</span>"
-            f"<span style='color:#fff;font-size:14px;font-weight:bold;"
+            f"<span style='color:#3a4a6b;font-size:13px;flex:1'>{sig['name']}</span>"
+            f"<span style='color:#1a1a2e;font-size:14px;font-weight:bold;"
             f"min-width:90px'>{sig['value']}</span>"
             f"<span style='color:{col};font-size:12px;font-weight:bold;"
             f"min-width:75px'>{sig['signal']}</span>"
-            f"<span style='color:#555;font-size:11px;flex:2;text-align:right'>"
+            f"<span style='color:#8a96b0;font-size:11px;flex:2;text-align:right'>"
             f"{sig['note']}</span>"
             f"</div>"
         )
 
     # Single render call — header + rows + footer + closing div all together
     st.markdown(f"""
-    <div style="background:#1e2130;border:2px solid {ov_col};
+    <div style="background:#f8f9fd;border:2px solid {ov_col};
                 border-radius:12px;padding:16px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;
                     margin-bottom:12px">
             <div>
                 <span style="font-size:22px">&#127758;</span>
-                <span style="font-size:18px;font-weight:bold;color:#fff;margin-left:8px">
+                <span style="font-size:18px;font-weight:bold;color:#1a1a2e;margin-left:8px">
                     Cross-Asset Signals</span>
             </div>
             <div style="text-align:right">
-                <div style="color:#aaa;font-size:11px">Overall Reading</div>
+                <div style="color:#6b7a99;font-size:11px">Overall Reading</div>
                 <div style="font-size:18px;font-weight:bold;color:{ov_col}">
                     {cross['overall']}</div>
-                <div style="color:#aaa;font-size:11px">
+                <div style="color:#6b7a99;font-size:11px">
                     Score: {cross['score']:+d} / {cross['total']} signals</div>
             </div>
         </div>
         {rows_html}
-        <div style='margin-top:10px;padding:8px 10px;background:#ffffff05;
-                    border-radius:6px;color:#444;font-size:11px'>
+        <div style='margin-top:10px;padding:8px 10px;background:#f0f3fa;
+                    border:1px solid #e0e4ef;border-radius:6px;color:#6b7a99;font-size:11px'>
             &#8505;&#65039; SGX Nifty &amp; US Futures not available via Kite API —
-            check <b style="color:#555">sgxnifty.com</b> (pre-market) and
-            <b style="color:#555">cnbc.com/world-markets</b> (US futures) manually.
+            check <b style="color:#3a4a6b">sgxnifty.com</b> (pre-market) and
+            <b style="color:#3a4a6b">cnbc.com/world-markets</b> (US futures) manually.
             Crude Oil requires MCX subscription.
         </div>
     </div>
@@ -3331,8 +3331,8 @@ def _render_checklist(result):
 
     if result.error:
         st.markdown(f"""
-<div style="background:#1e2130;border:2px solid #555;border-radius:12px;padding:16px;margin-bottom:12px">
-<div style="color:#888;font-size:13px">&#9888; {result.error}</div>
+<div style="background:#f8f9fd;border:2px solid #c8d0e8;border-radius:12px;padding:16px;margin-bottom:12px">
+<div style="color:#6b7a99;font-size:13px">&#9888; {result.error}</div>
 </div>""", unsafe_allow_html=True)
         return
 
@@ -3340,41 +3340,41 @@ def _render_checklist(result):
     bar_col   = color
 
     st.markdown(f"""
-<div style="background:#1e2130;border:2px solid {color};border-radius:12px;padding:20px;margin-bottom:16px">
+<div style="background:#f8f9fd;border:2px solid {color};border-radius:12px;padding:20px;margin-bottom:16px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
   <div>
-    <span style="font-size:18px;font-weight:700;color:#fff">{sym_label}</span>
-    <span style="font-size:13px;color:#888;margin-left:10px">{result.timeframe} Timeframe</span>
+    <span style="font-size:18px;font-weight:700;color:#1a1a2e">{sym_label}</span>
+    <span style="font-size:13px;color:#6b7a99;margin-left:10px">{result.timeframe} Timeframe</span>
   </div>
   <div style="text-align:right">
     <span style="font-size:22px;font-weight:800;color:{color}">{verdict}</span>
-    <div style="font-size:13px;color:#aaa">{score}/{max_s} checks passed</div>
+    <div style="font-size:13px;color:#6b7a99">{score}/{max_s} checks passed</div>
   </div>
 </div>
-<div style="background:#333;border-radius:4px;height:6px;margin-bottom:14px">
+<div style="background:#e0e4ef;border-radius:4px;height:6px;margin-bottom:14px">
   <div style="background:{bar_col};width:{bar_pct}%;height:6px;border-radius:4px"></div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
-  <div style="color:#aaa">Price: <b style="color:#fff">{result.price:,.0f}</b></div>
-  <div style="color:#aaa">RSI: <b style="color:#fff">{result.rsi:.1f}</b></div>
-  <div style="color:#aaa">EMA20: <b style="color:#fff">{result.ema20:,.0f}</b></div>
-  <div style="color:#aaa">EMA50: <b style="color:#fff">{result.ema50:,.0f}</b></div>
-  <div style="color:#aaa">EMA200: <b style="color:#fff">{result.ema200:,.0f}</b></div>
-  <div style="color:#aaa">Pivot: <b style="color:#fff">{result.pivot:,.0f}</b></div>
-  <div style="color:#aaa">Support: <b style="color:#00c853">{result.support:,.0f}</b></div>
-  <div style="color:#aaa">Resistance: <b style="color:#ff6b35">{result.resistance:,.0f}</b></div>
+  <div style="color:#6b7a99">Price: <b style="color:#1a1a2e">{result.price:,.0f}</b></div>
+  <div style="color:#6b7a99">RSI: <b style="color:#1a1a2e">{result.rsi:.1f}</b></div>
+  <div style="color:#6b7a99">EMA20: <b style="color:#1a1a2e">{result.ema20:,.0f}</b></div>
+  <div style="color:#6b7a99">EMA50: <b style="color:#1a1a2e">{result.ema50:,.0f}</b></div>
+  <div style="color:#6b7a99">EMA200: <b style="color:#1a1a2e">{result.ema200:,.0f}</b></div>
+  <div style="color:#6b7a99">Pivot: <b style="color:#1a1a2e">{result.pivot:,.0f}</b></div>
+  <div style="color:#6b7a99">Support: <b style="color:#1b7a2e">{result.support:,.0f}</b></div>
+  <div style="color:#6b7a99">Resistance: <b style="color:#c0392b">{result.resistance:,.0f}</b></div>
 </div>
 </div>""", unsafe_allow_html=True)
 
     for chk in result.checks:
         icon  = "&#9989;" if chk.passed else "&#10060;"
-        tcol  = "#00c853" if chk.passed else "#ff1744"
+        tcol  = "#1b7a2e" if chk.passed else "#c0392b"
         st.markdown(f"""
-<div style="display:flex;align-items:flex-start;padding:6px 0;border-bottom:1px solid #2a2a3a">
+<div style="display:flex;align-items:flex-start;padding:6px 0;border-bottom:1px solid #e0e4ef">
   <span style="font-size:14px;margin-right:10px">{icon}</span>
   <div>
     <div style="color:{tcol};font-size:13px;font-weight:600">{chk.name}</div>
-    <div style="color:#888;font-size:11px">{chk.detail}</div>
+    <div style="color:#6b7a99;font-size:11px">{chk.detail}</div>
   </div>
 </div>""", unsafe_allow_html=True)
 
@@ -3429,27 +3429,27 @@ def trend_compass_section():
     st.markdown(f"""
 <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:24px">
 <thead>
-<tr style="background:#1e2130;color:#aaa;font-size:12px">
-  <th style="padding:10px;text-align:left;border-bottom:1px solid #333">Symbol</th>
-  <th style="padding:10px;text-align:center;border-bottom:1px solid #333">Weekly Trend</th>
-  <th style="padding:10px;text-align:center;border-bottom:1px solid #333">Monthly Trend</th>
-  <th style="padding:10px;text-align:center;border-bottom:1px solid #333">Overall Bias</th>
+<tr style="background:#f0f3fa;color:#3a4a6b;font-size:12px">
+  <th style="padding:10px;text-align:left;border-bottom:1px solid #e0e4ef">Symbol</th>
+  <th style="padding:10px;text-align:center;border-bottom:1px solid #e0e4ef">Weekly Trend</th>
+  <th style="padding:10px;text-align:center;border-bottom:1px solid #e0e4ef">Monthly Trend</th>
+  <th style="padding:10px;text-align:center;border-bottom:1px solid #e0e4ef">Overall Bias</th>
 </tr>
 </thead>
 <tbody>
-<tr style="background:#161b27">
-  <td style="padding:10px;color:#fff;font-weight:700">NIFTY 50</td>
+<tr style="background:#ffffff">
+  <td style="padding:10px;color:#1a1a2e;font-weight:700">NIFTY 50</td>
   <td style="padding:10px;text-align:center">{nw_b}</td>
   <td style="padding:10px;text-align:center">{nm_b}</td>
-  <td style="padding:10px;text-align:center;font-size:13px;color:#aaa">
+  <td style="padding:10px;text-align:center;font-size:13px;color:#6b7a99">
     {_overall_bias(nw, nm)}
   </td>
 </tr>
-<tr style="background:#1e2130">
-  <td style="padding:10px;color:#fff;font-weight:700">BANK NIFTY</td>
+<tr style="background:#f8f9fd">
+  <td style="padding:10px;color:#1a1a2e;font-weight:700">BANK NIFTY</td>
   <td style="padding:10px;text-align:center">{bnw_b}</td>
   <td style="padding:10px;text-align:center">{bnm_b}</td>
-  <td style="padding:10px;text-align:center;font-size:13px;color:#aaa">
+  <td style="padding:10px;text-align:center;font-size:13px;color:#6b7a99">
     {_overall_bias(bnw, bnm)}
   </td>
 </tr>
@@ -3458,8 +3458,8 @@ def trend_compass_section():
 
     # ── Trading rule box ──────────────────────────────────────────────────────
     st.markdown("""
-<div style="background:#0d1f0d;border:1px solid #00c853;border-radius:8px;padding:14px;margin-bottom:20px;font-size:13px;color:#ccc">
-<b style="color:#00c853">&#128273; Trading Rules</b><br><br>
+<div style="background:#f0fff4;border:1px solid #aaecc0;border-radius:8px;padding:14px;margin-bottom:20px;font-size:13px;color:#2a4a2a">
+<b style="color:#1b7a2e">&#128273; Trading Rules</b><br><br>
 &#8226; <b>Both Weekly + Monthly BULLISH</b> &#8594; Buy Calls / Bull Spreads / Sell Puts<br>
 &#8226; <b>Weekly BULLISH, Monthly NEUTRAL</b> &#8594; Cautious longs, tight SL<br>
 &#8226; <b>Weekly BEARISH, Monthly BULLISH</b> &#8594; Wait for weekly reversal before buying<br>
@@ -3885,44 +3885,44 @@ def render_backtester(symbol: str):
 
     st.markdown(f"""
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Total Trades</div>
-        <div style="font-size:28px;font-weight:bold;color:#fff">{an.total_trades}</div>
-        <div style="color:#555;font-size:11px">{an.wins}W / {an.losses}L</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Total Trades</div>
+        <div style="font-size:28px;font-weight:bold;color:#1a1a2e">{an.total_trades}</div>
+        <div style="color:#8a96b0;font-size:11px">{an.wins}W / {an.losses}L</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Win Rate</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Win Rate</div>
         <div style="font-size:28px;font-weight:bold;color:{wr_color}">{an.win_rate}%</div>
-        <div style="color:#555;font-size:11px">Avg Win {an.avg_win_pct:+.1f}% / Loss {an.avg_loss_pct:+.1f}%</div>
+        <div style="color:#8a96b0;font-size:11px">Avg Win {an.avg_win_pct:+.1f}% / Loss {an.avg_loss_pct:+.1f}%</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Profit Factor</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Profit Factor</div>
         <div style="font-size:28px;font-weight:bold;color:{pf_color}">{an.profit_factor}</div>
-        <div style="color:#555;font-size:11px">&gt;1.5 = Good | &gt;2.0 = Excellent</div>
+        <div style="color:#8a96b0;font-size:11px">&gt;1.5 = Good | &gt;2.0 = Excellent</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Total P&amp;L</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Total P&amp;L</div>
         <div style="font-size:28px;font-weight:bold;color:{roi_color}">₹{an.total_pnl_rs:,.0f}</div>
-        <div style="color:#555;font-size:11px">ROI {an.roi_pct:+.1f}%</div>
+        <div style="color:#8a96b0;font-size:11px">ROI {an.roi_pct:+.1f}%</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Max Drawdown</div>
-        <div style="font-size:22px;font-weight:bold;color:#ff6d00">₹{an.max_drawdown_rs:,.0f}</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Max Drawdown</div>
+        <div style="font-size:22px;font-weight:bold;color:#c0392b">₹{an.max_drawdown_rs:,.0f}</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Sharpe Ratio</div>
-        <div style="font-size:22px;font-weight:bold;color:#7fb3f5">{an.sharpe_ratio}</div>
-        <div style="color:#555;font-size:11px">&gt;1.0 = Good</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Sharpe Ratio</div>
+        <div style="font-size:22px;font-weight:bold;color:#1a56db">{an.sharpe_ratio}</div>
+        <div style="color:#8a96b0;font-size:11px">&gt;1.0 = Good</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Expectancy / Trade</div>
-        <div style="font-size:22px;font-weight:bold;color:#00d4ff">₹{an.expectancy_rs:,.0f}</div>
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Expectancy / Trade</div>
+        <div style="font-size:22px;font-weight:bold;color:#1a56db">₹{an.expectancy_rs:,.0f}</div>
       </div>
-      <div style="background:#1e2130;border-radius:10px;padding:16px;text-align:center">
-        <div style="color:#888;font-size:12px">Max Streak</div>
-        <div style="font-size:22px;font-weight:bold;color:#fff">
+      <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:10px;padding:16px;text-align:center">
+        <div style="color:#6b7a99;font-size:12px">Max Streak</div>
+        <div style="font-size:22px;font-weight:bold;color:#1a1a2e">
           🟢{an.max_win_streak}  🔴{an.max_loss_streak}
         </div>
       </div>
@@ -3953,11 +3953,11 @@ def render_backtester(symbol: str):
             fillcolor = "rgba(0,200,83,0.1)",
         ))
         fig.update_layout(
-            paper_bgcolor = "#0e1117",
-            plot_bgcolor  = "#0e1117",
-            font          = dict(color="#fff"),
-            xaxis         = dict(title="Time", gridcolor="#2d3250"),
-            yaxis         = dict(title="Portfolio Value (₹)", gridcolor="#2d3250"),
+            paper_bgcolor = "#ffffff",
+            plot_bgcolor  = "#f8f9fd",
+            font          = dict(color="#1a1a2e"),
+            xaxis         = dict(title="Time", gridcolor="#e0e4ef"),
+            yaxis         = dict(title="Portfolio Value (₹)", gridcolor="#e0e4ef"),
             height        = 350,
             margin        = dict(l=10, r=10, t=30, b=10),
         )
@@ -3978,11 +3978,11 @@ def render_backtester(symbol: str):
             name = "Daily P&L",
         ))
         fig2.update_layout(
-            paper_bgcolor = "#0e1117",
-            plot_bgcolor  = "#0e1117",
-            font          = dict(color="#fff"),
-            xaxis         = dict(gridcolor="#2d3250"),
-            yaxis         = dict(title="P&L (₹)", gridcolor="#2d3250"),
+            paper_bgcolor = "#ffffff",
+            plot_bgcolor  = "#f8f9fd",
+            font          = dict(color="#1a1a2e"),
+            xaxis         = dict(gridcolor="#e0e4ef"),
+            yaxis         = dict(title="P&L (₹)", gridcolor="#e0e4ef"),
             height        = 280,
             margin        = dict(l=10, r=10, t=20, b=10),
         )
