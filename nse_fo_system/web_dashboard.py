@@ -3046,10 +3046,6 @@ def _render_alert_history():
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MARKET PULSE — Bloomberg-style unified score panel
-# ══════════════════════════════════════════════════════════════════════════════
-
 def _compute_market_pulse(cache: dict, symbol: str) -> dict:
     """
     Sab signals ek score mein — -100 to +100.
@@ -3249,123 +3245,6 @@ def _compute_market_pulse(cache: dict, symbol: str) -> dict:
     }
 
 
-def render_market_pulse(cache: dict, symbol: str):
-    """Bloomberg-style unified market score panel — single st.markdown call."""
-    data  = _compute_market_pulse(cache, symbol)
-    pct   = data["display_pct"]
-    raw   = data["raw"]
-    bg    = data["bg"]
-    bdr   = data["border"]
-    lbl   = data["label"]
-    call  = data["call"]
-    ccol  = data["call_col"]
-    conf  = data["confidence"]
-    spot  = data["spot"]
-    comps = data["components"]
-
-    conf_col = {"HIGH": "#1b7a2e", "MEDIUM": "#b07c00", "LOW": "#8a96b0"}[conf]
-    conf_bg  = {"HIGH": "#e8f5e9", "MEDIUM": "#fff8e1", "LOW": "#f0f3fa"}[conf]
-    active   = len([c for c in comps if c["pts"] != 0])
-
-    # ── Gauge bar — two-div split (no absolute positioning needed) ────────────
-    # Left portion = filled (gradient red→color), Right = gray track
-    left_pct  = max(1, min(99, pct))
-    right_pct = 100 - left_pct
-    # Color the filled portion based on direction
-    if pct >= 55:
-        fill_grad = f"linear-gradient(to right,#ffeb3b,{bdr})"
-    elif pct <= 45:
-        fill_grad = f"linear-gradient(to right,{bdr},#ffeb3b)"
-    else:
-        fill_grad = "linear-gradient(to right,#ef9a9a,#fff9c4,#a5d6a7)"
-
-    # ── Component rows HTML ───────────────────────────────────────────────────
-    rows_html = ""
-    for c in comps:
-        pts     = c["pts"]
-        max_pts = c["max"]
-        col     = c["color"]
-        bar_w   = int(abs(pts) / max_pts * 100) if max_pts else 0
-        bar_col = col if pts != 0 else "#e0e4ef"
-        pts_str = f"{pts:+d}" if pts != 0 else "0"
-        rows_html += (
-            f"<div style='display:flex;align-items:center;gap:8px;padding:5px 8px;"
-            f"margin:3px 0;background:#ffffff;border-radius:6px;"
-            f"border-left:3px solid {col}'>"
-            f"<span style='color:#3a4a6b;font-size:12px;min-width:115px;"
-            f"font-weight:500'>{c['name']}</span>"
-            f"<span style='color:#6b7a99;font-size:11px;min-width:75px'>{c['value']}</span>"
-            f"<div style='flex:1;height:6px;background:#f0f3fa;border-radius:3px;overflow:hidden'>"
-            f"<div style='width:{bar_w}%;height:6px;background:{bar_col};border-radius:3px'></div>"
-            f"</div>"
-            f"<span style='color:{col};font-size:11px;font-weight:700;"
-            f"min-width:28px;text-align:right'>{pts_str}</span>"
-            f"<span style='color:{col};font-size:11px;font-weight:600;"
-            f"min-width:105px'>{c['signal']}</span>"
-            f"</div>"
-        )
-
-    # ── Single render call ────────────────────────────────────────────────────
-    st.markdown(f"""
-<div style="background:{bg};border:2px solid {bdr};border-radius:14px;
-            padding:18px 20px 16px;margin-bottom:14px">
-
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;
-              margin-bottom:12px">
-    <div>
-      <div style="font-size:11px;color:#6b7a99;letter-spacing:1.5px;
-                   text-transform:uppercase;margin-bottom:4px">
-          ⚡ Market Pulse &nbsp;·&nbsp; {symbol}</div>
-      <div style="font-size:26px;font-weight:800;color:{bdr};line-height:1.1">{lbl}</div>
-      <div style="font-size:12px;color:#6b7a99;margin-top:4px">
-          Spot: <b style="color:#1a1a2e">{int(spot):,}</b>
-          &nbsp;·&nbsp; Score: <b style="color:{bdr}">{raw:+d}</b>
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:44px;font-weight:900;color:{bdr};line-height:1">{pct}</div>
-      <div style="font-size:11px;color:#6b7a99">/ 100</div>
-      <div style="background:{conf_bg};color:{conf_col};font-weight:700;
-                   font-size:11px;padding:3px 10px;border-radius:10px;
-                   margin-top:4px;display:inline-block">{conf} CONFIDENCE</div>
-    </div>
-  </div>
-
-  <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;
-              margin-bottom:4px;border:1px solid #e0e4ef">
-    <div style="width:{left_pct}%;background:{fill_grad};
-                border-right:3px solid {bdr}"></div>
-    <div style="width:{right_pct}%;background:#f0f3fa"></div>
-  </div>
-  <div style="display:flex;justify-content:space-between;font-size:10px;
-              color:#8a96b0;margin-bottom:14px">
-    <span>&#9650; STRONG BEARISH</span>
-    <span>NEUTRAL</span>
-    <span>STRONG BULLISH &#9650;</span>
-  </div>
-
-  <div style="font-size:10px;color:#6b7a99;letter-spacing:1px;
-               text-transform:uppercase;margin-bottom:6px">
-      Components ({active} active)</div>
-
-  {rows_html}
-
-  <div style="margin-top:10px;padding:12px 16px;background:#ffffff;
-              border:2px solid {bdr};border-radius:8px;
-              display:flex;align-items:center;justify-content:space-between">
-    <div>
-      <div style="font-size:10px;color:#6b7a99;letter-spacing:1px">FINAL CALL</div>
-      <div style="font-size:22px;font-weight:800;color:{ccol};margin-top:2px">{call}</div>
-    </div>
-    <div style="text-align:right;font-size:11px;color:#8a96b0">
-      Based on {active} signals<br>
-      <b style="color:{bdr}">{pct}/100</b> &nbsp;·&nbsp; {lbl}
-    </div>
-  </div>
-
-</div>
-""", unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE DATA FRAGMENT — har 60 sec mein auto-refresh, page reload nahi hoga
@@ -3430,11 +3309,6 @@ def live_data_section(symbol, expiry):
     # ── Market Overview ──────────────────────────────────────────────────────
     st.markdown("### 🌐 Market Overview")
     render_market_overview(cache)
-    st.divider()
-
-    # ── MARKET PULSE — Bloomberg-style unified score ──────────────────────────
-    st.markdown("### ⚡ Market Pulse")
-    render_market_pulse(cache, symbol)
     st.divider()
 
     # ── TRADE SIGNAL — Sabse Important Panel ─────────────────────────────────
