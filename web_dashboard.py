@@ -35,25 +35,22 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── CSS — Sensibull / TradingView inspired ────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── Base ────────────────────────────────────────────── */
     .stApp {
-        background-color: #1a1d2e;
-        color: #d1d4dc;
+        background-color: #ffffff;
+        color: #1a1a2e;
         font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
         font-size: 13px;
     }
 
-    /* ── Sidebar ──────────────────────────────────────────── */
     [data-testid="stSidebar"] {
-        background-color: #13152a !important;
-        border-right: 1px solid #2a2e39;
+        background-color: #f4f6fb !important;
+        border-right: 1px solid #e0e4ef;
     }
-    [data-testid="stSidebar"] * { color: #b2b5be !important; }
+    [data-testid="stSidebar"] * { color: #2c3e60 !important; }
 
-    /* ── Nav radio — Sensibull pill style ────────────────── */
     div[data-testid="stSidebar"] .stRadio > div { gap: 2px; }
     div[data-testid="stSidebar"] .stRadio label {
         background: transparent;
@@ -65,21 +62,21 @@ st.markdown("""
         font-size: 13px !important;
         font-weight: 500 !important;
         width: 100%;
+        color: #3a4a6b !important;
     }
     div[data-testid="stSidebar"] .stRadio label:hover {
-        background: rgba(255,255,255,0.06) !important;
-        color: #d1d4dc !important;
+        background: #e8edf8 !important;
+        color: #1a56db !important;
     }
 
-    /* ── Metric cards ─────────────────────────────────────── */
     div[data-testid="metric-container"] {
-        background-color: #1e2130;
-        border: 1px solid #2a2e39;
+        background-color: #f8f9fd;
+        border: 1px solid #e0e4ef;
         border-radius: 8px;
         padding: 12px 16px;
     }
     div[data-testid="metric-container"] label {
-        color: #787b86 !important;
+        color: #7a8aaa !important;
         font-size: 11px !important;
         text-transform: uppercase;
         letter-spacing: 0.6px;
@@ -88,98 +85,82 @@ st.markdown("""
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
         font-size: 20px !important;
         font-weight: 600 !important;
-        color: #d1d4dc !important;
+        color: #1a1a2e !important;
     }
 
-    /* ── DataFrames ───────────────────────────────────────── */
     .stDataFrame {
         border-radius: 8px !important;
-        border: 1px solid #2a2e39 !important;
+        border: 1px solid #e0e4ef !important;
     }
 
-    /* ── Headings ─────────────────────────────────────────── */
-    h1 { color: #2962ff !important; font-size: 18px !important; font-weight: 600 !important; }
-    h2 { color: #d1d4dc !important; font-size: 15px !important; font-weight: 600 !important; }
-    h3 { color: #787b86 !important; font-size: 11px !important; font-weight: 600 !important;
+    h1 { color: #1a56db !important; font-size: 18px !important; font-weight: 700 !important; }
+    h2 { color: #1a1a2e !important; font-size: 15px !important; font-weight: 600 !important; }
+    h3 { color: #7a8aaa !important; font-size: 11px !important; font-weight: 600 !important;
          text-transform: uppercase; letter-spacing: 0.8px; }
 
-    /* ── Hide Streamlit chrome ────────────────────────────── */
     #MainMenu { visibility: hidden; }
     footer    { visibility: hidden; }
     header    { visibility: hidden; }
     [data-testid="stDecoration"] { display: none; }
 
-    /* ── Expanders ────────────────────────────────────────── */
     div[data-testid="stExpander"] {
-        background-color: #1e2130;
-        border: 1px solid #2a2e39 !important;
+        background-color: #f8f9fd;
+        border: 1px solid #e0e4ef !important;
         border-radius: 8px;
     }
-    div[data-testid="stExpander"]:hover { border-color: #363a45 !important; }
 
-    /* ── Buttons ──────────────────────────────────────────── */
     .stButton > button {
-        background-color: #2a2e39;
-        border: 1px solid #363a45;
+        background-color: #f0f3fa;
+        border: 1px solid #c8d0e8;
         border-radius: 6px;
-        color: #b2b5be !important;
+        color: #3a4a6b !important;
         font-size: 13px;
         font-weight: 500;
         padding: 6px 16px;
         transition: all 0.15s ease;
     }
     .stButton > button:hover {
-        background-color: #363a45;
-        border-color: #4a5060;
-        color: #d1d4dc !important;
+        background-color: #e0e8f8;
+        border-color: #1a56db;
+        color: #1a56db !important;
     }
 
-    /* ── Inner tabs ──────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: #1e2130;
+        background-color: #f0f3fa;
         border-radius: 6px;
         padding: 3px;
         gap: 2px;
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 4px;
-        color: #787b86 !important;
+        color: #7a8aaa !important;
         font-size: 12px;
         font-weight: 500;
         padding: 5px 12px;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #2a2e39 !important;
-        color: #d1d4dc !important;
+        background-color: #ffffff !important;
+        color: #1a56db !important;
     }
 
-    /* ── Alerts ───────────────────────────────────────────── */
     div[data-testid="stAlert"] { border-radius: 6px !important; }
 
-    /* ── Divider ──────────────────────────────────────────── */
-    hr { border-color: #2a2e39 !important; margin: 10px 0 !important; }
+    hr { border-color: #e0e4ef !important; margin: 10px 0 !important; }
 
-    /* ── Selectbox ────────────────────────────────────────── */
     [data-testid="stSelectbox"] > div > div {
-        background-color: #2a2e39 !important;
-        border-color: #363a45 !important;
+        background-color: #f8f9fd !important;
+        border-color: #c8d0e8 !important;
         border-radius: 6px !important;
-        color: #d1d4dc !important;
+        color: #1a1a2e !important;
         font-size: 13px !important;
     }
 
-    /* ── Page padding ─────────────────────────────────────── */
     .block-container {
         padding-top: 1rem !important;
         padding-left: 1.5rem !important;
         padding-right: 1.5rem !important;
         max-width: 100% !important;
     }
-
-    /* ── Custom scrollbar ─────────────────────────────────── */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #131722; }
-    ::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #363a45; }
 </style>
 """, unsafe_allow_html=True)
@@ -1179,32 +1160,32 @@ def render_header(symbol, expiry, cache):
         pnl_str, pnl_col, trades = "₹0", "#888", 0
 
     st.markdown(f"""
-    <div style="background:#1e2130;border:1px solid #2a2e39;border-radius:8px;
+    <div style="background:#f8f9fd;border:1px solid #e0e4ef;border-radius:8px;
                 padding:10px 18px;margin-bottom:14px;
                 display:flex;justify-content:space-between;align-items:center;
                 flex-wrap:wrap;gap:12px;">
         <div style="display:flex;align-items:center;gap:16px">
-            <span style="font-size:18px;font-weight:700;color:#d1d4dc">{symbol}</span>
-            <span style="background:#2a2e39;border-radius:4px;padding:3px 8px;
-                         font-size:11px;color:#787b86;font-weight:500">
-                Expiry &nbsp;<b style="color:#b2b5be">{expiry}</b>
+            <span style="font-size:18px;font-weight:700;color:#1a1a2e">{symbol}</span>
+            <span style="background:#e8edf8;border-radius:4px;padding:3px 8px;
+                         font-size:11px;color:#5a6a8a;font-weight:500">
+                Expiry &nbsp;<b style="color:#1a1a2e">{expiry}</b>
             </span>
             <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px">
                 <span style="width:7px;height:7px;border-radius:50%;
                              background:{s_color};display:inline-block"></span>
-                <span style="color:#787b86">{status}</span>
+                <span style="color:#5a6a8a">{status}</span>
             </span>
         </div>
         <div style="display:flex;align-items:center;gap:20px">
             <div>
-                <div style="font-size:10px;color:#4a4f5e;text-transform:uppercase;
+                <div style="font-size:10px;color:#9aa0b4;text-transform:uppercase;
                              letter-spacing:0.6px">Day P&amp;L</div>
                 <div style="font-size:16px;font-weight:600;color:{pnl_col}">
-                    {pnl_str}&nbsp;<span style="font-size:11px;color:#4a4f5e;
+                    {pnl_str}&nbsp;<span style="font-size:11px;color:#9aa0b4;
                     font-weight:400">({trades} trades)</span>
                 </div>
             </div>
-            <div style="font-size:11px;color:#363a45;border-left:1px solid #2a2e39;
+            <div style="font-size:11px;color:#c0c8d8;border-left:1px solid #e0e4ef;
                          padding-left:16px">&#x1f504; {fetched}</div>
         </div>
     </div>
@@ -3652,15 +3633,15 @@ def render_sidebar() -> str:
         wins    = summary.get("win_trades", 0)
         losses  = summary.get("loss_trades", 0)
         sb.markdown(f"""
-        <div style="background:#131722;border:1px solid #2a2e39;border-radius:6px;
+        <div style="background:#eef2fb;border:1px solid #d0d8ee;border-radius:6px;
                     padding:10px 12px;margin:0 0 4px">
-            <div style="font-size:11px;color:#4a4f5e;margin-bottom:4px">P&amp;L</div>
+            <div style="font-size:11px;color:#8a96b0;margin-bottom:4px">P&amp;L</div>
             <div style="font-size:20px;font-weight:600;color:{pnl_col}">
-                {pnl_sym} ₹{abs(pnl):,.0f}
+                {pnl_sym} &#8377;{abs(pnl):,.0f}
             </div>
-            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#4a4f5e">
-                <span>Trades <b style="color:#787b86">{trades}</b></span>
-                <span>W/L <b style="color:#26a69a">{wins}</b>/<b style="color:#ef5350">{losses}</b></span>
+            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#8a96b0">
+                <span>Trades <b style="color:#3a4a6b">{trades}</b></span>
+                <span>W/L <b style="color:#00897b">{wins}</b>/<b style="color:#e53935">{losses}</b></span>
                 <span>WR <b style="color:{pnl_col}">{wr:.0f}%</b></span>
             </div>
         </div>
@@ -3684,14 +3665,14 @@ def render_sidebar() -> str:
         <div style="display:flex;align-items:center;gap:6px;font-size:12px">
             <span style="width:6px;height:6px;border-radius:50%;
                          background:{dot_col};display:inline-block"></span>
-            <span style="color:#787b86">{mkt}</span>
+            <span style="color:#5a6a8a">{mkt}</span>
         </div>
-        <span style="font-size:11px;color:#363a45">{now_str}</span>
+        <span style="font-size:11px;color:#b0b8cc">{now_str}</span>
     </div>
     """, unsafe_allow_html=True)
 
     sb.markdown(
-        "<div style='color:#2a2e39;font-size:10px;text-align:center;"
+        "<div style='color:#c0c8d8;font-size:10px;text-align:center;"
         "padding:6px 0 2px'>Live Data · Auto-refresh 60s</div>",
         unsafe_allow_html=True
     )
