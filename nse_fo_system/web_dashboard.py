@@ -1294,6 +1294,11 @@ def render_oi_chain(cache, symbol):
             "_atm":   r.strike == atm,
         })
 
+    # ── Auto-scroll to ATM: start display 2 rows before ATM ─────────────────
+    atm_pos = next((i for i, r in enumerate(rows) if r["_atm"]), 0)
+    start   = max(0, atm_pos - 2)
+    rows    = rows[start:]
+
     df       = pd.DataFrame(rows)
     atm_mask = df["_atm"].tolist()
     df       = df.drop(columns=["_atm"])
