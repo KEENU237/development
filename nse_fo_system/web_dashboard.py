@@ -3047,6 +3047,327 @@ def _render_alert_history():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MARKET PULSE — Bloomberg-style unified score panel
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_market_pulse(cache: dict, symbol: str) -> dict:
+    """
+    Sab signals ek score mein — -100 to +100.
+    Positive = Bullish, Negative = Bearish.
+    Max possible = ±100 (designed exactly).
+    """
+    sym_map   = {"NIFTY": "NSE:NIFTY 50", "BANKNIFTY": "NSE:NIFTY BANK",
+                 "FINNIFTY": "NSE:NIFTY FIN SERVICE"}
+    prices    = cache.get("prices",   {})
+    oi_chain  = cache.get("oi_chain", [])
+    pcr_data  = cache.get("pcr_data", {})
+    iv_data   = cache.get("iv_data",  {})
+    mp_result = cache.get("mp_result")
+    gex_data  = cache.get("gex_data", {})
+    vp_data   = cache.get("vp_data",  {})
+    smi_data  = cache.get("smi_data", {})
+
+    spot = prices.get(sym_map.get(symbol, ""), 0)
+    vix  = prices.get("NSE:INDIA VIX", 0)
+    step = 50 if symbol == "NIFTY" else 100
+    atm  = round(spot / step) * step if spot else 0
+
+    raw   = 0
+    comps = []   # list of component dicts
+
+    # ── 1. PCR Value (±20) ───────────────────────────────────────────────────
+    pcr_info = pcr_data.get(symbol)
+    if pcr_info:
+        r, trend = pcr_info
+        pcr_v = r.pcr
+        if   pcr_v >= 1.5:  pts = +20; sig = "STRONG BULL"; col = "#1b7a2e"
+        elif pcr_v >= 1.2:  pts = +15; sig = "BULLISH";     col = "#2e7d32"
+        elif pcr_v >= 0.9:  pts =  0;  sig = "NEUTRAL";     col = "#b07c00"
+        elif pcr_v >= 0.7:  pts = -15; sig = "BEARISH";     col = "#c0392b"
+        else:               pts = -20; sig = "STRONG BEAR"; col = "#b71c1c"
+        # Trend bonus
+        if trend == "▲":   pts = min(pts + 10, 20); sig += " ▲"
+        elif trend == "▼": pts = max(pts - 10, -20); sig += " ▼"
+        raw += pts
+        comps.append({"name": "📊 PCR", "value": f"{pcr_v:.2f} {trend}",
+                      "signal": sig, "pts": pts, "max": 20, "color": col})
+    else:
+        comps.append({"name": "📊 PCR", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 20, "color": "#8a96b0"})
+
+    # ── 2. OI Build ATM (±20) ────────────────────────────────────────────────
+    oi_pts = 0; oi_sig = "NEUTRAL"; oi_val = "—"; oi_col = "#8a96b0"
+    for row in oi_chain:
+        if abs(row.strike - atm) <= step:
+            total_oi  = (row.ce_oi or 0) + (row.pe_oi or 0)
+            threshold = max(200, min(5000, int(total_oi * 0.05)))
+            if   row.ce_oi_chg >  threshold:
+                oi_pts = +20; oi_sig = "FRESH LONG";  oi_col = "#1b7a2e"
+                oi_val = f"+{row.ce_oi_chg/1e5:.1f}L CE"
+            elif row.pe_oi_chg >  threshold:
+                oi_pts = -20; oi_sig = "FRESH SHORT"; oi_col = "#c0392b"
+                oi_val = f"+{row.pe_oi_chg/1e5:.1f}L PE"
+            elif row.ce_oi_chg < -threshold:
+                oi_pts = -10; oi_sig = "LONG UNWIND"; oi_col = "#e65100"
+                oi_val = f"{row.ce_oi_chg/1e5:.1f}L CE"
+            elif row.pe_oi_chg < -threshold:
+                oi_pts = +10; oi_sig = "SHORT COVER"; oi_col = "#2e7d32"
+                oi_val = f"{row.pe_oi_chg/1e5:.1f}L PE"
+            else:
+                oi_pts = 0; oi_sig = "NEUTRAL"; oi_col = "#8a96b0"
+                oi_val = "No change"
+            break
+    raw += oi_pts
+    comps.append({"name": "📈 OI Build", "value": oi_val,
+                  "signal": oi_sig, "pts": oi_pts, "max": 20, "color": oi_col})
+
+    # ── 3. VIX Level (±8) ────────────────────────────────────────────────────
+    if vix > 0:
+        if   vix < 12:  v_pts = +8;  v_sig = "VERY LOW";   v_col = "#1b7a2e"
+        elif vix < 15:  v_pts = +5;  v_sig = "LOW";         v_col = "#2e7d32"
+        elif vix < 18:  v_pts =  0;  v_sig = "MODERATE";    v_col = "#b07c00"
+        elif vix < 22:  v_pts = -5;  v_sig = "HIGH FEAR";   v_col = "#c0392b"
+        else:           v_pts = -8;  v_sig = "EXTREME FEAR";v_col = "#b71c1c"
+        raw += v_pts
+        comps.append({"name": "😰 VIX", "value": f"{vix:.1f}",
+                      "signal": v_sig, "pts": v_pts, "max": 8, "color": v_col})
+    else:
+        comps.append({"name": "😰 VIX", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 8, "color": "#8a96b0"})
+
+    # ── 4. IV Environment (±8) ────────────────────────────────────────────────
+    ivr = iv_data.get("iv_rank", -1)
+    if ivr >= 0:
+        if   ivr < 20:  i_pts = +8;  i_sig = "CHEAP BUY";  i_col = "#1b7a2e"
+        elif ivr < 40:  i_pts = +4;  i_sig = "NORMAL";      i_col = "#2e7d32"
+        elif ivr < 60:  i_pts =  0;  i_sig = "MODERATE";    i_col = "#b07c00"
+        elif ivr < 80:  i_pts = -4;  i_sig = "EXPENSIVE";   i_col = "#c0392b"
+        else:           i_pts = -8;  i_sig = "SELL PREMIUM"; i_col = "#b71c1c"
+        raw += i_pts
+        comps.append({"name": "📉 IV Rank", "value": f"{ivr:.0f}%",
+                      "signal": i_sig, "pts": i_pts, "max": 8, "color": i_col})
+    else:
+        comps.append({"name": "📉 IV Rank", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 8, "color": "#8a96b0"})
+
+    # ── 5. GEX Regime (±8) ────────────────────────────────────────────────────
+    gex_regime = gex_data.get("regime", "")
+    gex_total  = gex_data.get("total_gex", 0)
+    if gex_regime:
+        if   "VOLATILE" in gex_regime.upper() or "TRENDING" in gex_regime.upper():
+            g_pts = +8; g_sig = "TRENDING";   g_col = "#1b7a2e"
+        elif "RANGE" in gex_regime.upper():
+            g_pts = -8; g_sig = "RANGE BOUND"; g_col = "#c0392b"
+        else:
+            g_pts =  0; g_sig = "NEUTRAL";    g_col = "#b07c00"
+        raw += g_pts
+        comps.append({"name": "⚡ GEX", "value": f"{gex_total:+.1f}Cr",
+                      "signal": g_sig, "pts": g_pts, "max": 8, "color": g_col})
+    else:
+        comps.append({"name": "⚡ GEX", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 8, "color": "#8a96b0"})
+
+    # ── 6. Max Pain Direction (±8) ────────────────────────────────────────────
+    if mp_result and spot:
+        mp_dist = mp_result.max_pain_strike - spot
+        dist_pct = mp_dist / spot * 100
+        if   dist_pct > 0.5:   m_pts = +8;  m_sig = "PULL UP";  m_col = "#1b7a2e"
+        elif dist_pct < -0.5:  m_pts = -8;  m_sig = "PULL DOWN";m_col = "#c0392b"
+        else:                   m_pts =  0;  m_sig = "AT PAIN";  m_col = "#b07c00"
+        raw += m_pts
+        comps.append({"name": "🎯 Max Pain", "value": f"{int(mp_result.max_pain_strike):,}",
+                      "signal": m_sig, "pts": m_pts, "max": 8, "color": m_col})
+    else:
+        comps.append({"name": "🎯 Max Pain", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 8, "color": "#8a96b0"})
+
+    # ── 7. Volume Profile POC (±8) ────────────────────────────────────────────
+    poc = vp_data.get("poc")
+    if poc and spot:
+        poc_d = spot - poc
+        if   poc_d >  step: p_pts = +8;  p_sig = "ABOVE POC"; p_col = "#1b7a2e"
+        elif poc_d < -step: p_pts = -8;  p_sig = "BELOW POC"; p_col = "#c0392b"
+        else:               p_pts =  0;  p_sig = "AT POC";    p_col = "#b07c00"
+        raw += p_pts
+        comps.append({"name": "📊 Volume POC", "value": f"{int(poc):,}",
+                      "signal": p_sig, "pts": p_pts, "max": 8, "color": p_col})
+    else:
+        comps.append({"name": "📊 Volume POC", "value": "—",
+                      "signal": "NO DATA", "pts": 0, "max": 8, "color": "#8a96b0"})
+
+    # ── 8. SMI (±10) ─────────────────────────────────────────────────────────
+    if smi_data and not smi_data.get("error"):
+        smi_sig_raw = smi_data.get("signal", "")
+        tomorrow    = smi_data.get("tomorrow", "")
+        if   "BULL" in smi_sig_raw.upper() or tomorrow == "BULLISH":
+            s_pts = +10; s_sig = "SMART MONEY BUY"; s_col = "#1b7a2e"
+        elif "BEAR" in smi_sig_raw.upper() or tomorrow == "BEARISH":
+            s_pts = -10; s_sig = "DISTRIBUTION";    s_col = "#c0392b"
+        else:
+            s_pts =   0; s_sig = "NEUTRAL";          s_col = "#b07c00"
+        raw += s_pts
+        comps.append({"name": "🧠 Smart Money", "value": smi_sig_raw[:15],
+                      "signal": s_sig, "pts": s_pts, "max": 10, "color": s_col})
+    else:
+        comps.append({"name": "🧠 Smart Money", "value": "—",
+                      "signal": "INTRADAY ONLY", "pts": 0, "max": 10, "color": "#8a96b0"})
+
+    # ── Final labels ──────────────────────────────────────────────────────────
+    # raw is roughly -80 to +80 (some comps may be absent)
+    # Clamp to ±80, then normalize to 0-100
+    raw_clamped  = max(-80, min(80, raw))
+    display_pct  = int((raw_clamped + 80) / 160 * 100)  # 0-100
+
+    if   display_pct >= 72: label = "STRONG BULLISH"; border = "#1b7a2e"; bg = "#f0fff4"
+    elif display_pct >= 58: label = "BULLISH";         border = "#2e7d32"; bg = "#f0fff4"
+    elif display_pct >= 48: label = "SLIGHTLY BULLISH";border = "#558b2f"; bg = "#f9fbe7"
+    elif display_pct >= 42: label = "NEUTRAL";         border = "#b07c00"; bg = "#fffde7"
+    elif display_pct >= 32: label = "SLIGHTLY BEARISH";border = "#e65100"; bg = "#fff8f0"
+    elif display_pct >= 18: label = "BEARISH";         border = "#c0392b"; bg = "#fff5f5"
+    else:                   label = "STRONG BEARISH";  border = "#b71c1c"; bg = "#fff5f5"
+
+    # Final call
+    if   display_pct >= 58: call = "▲ BUY CE";    call_col = "#1b7a2e"
+    elif display_pct <= 42: call = "▼ BUY PE";    call_col = "#c0392b"
+    else:                   call = "→ WAIT / SELL PREMIUM"; call_col = "#b07c00"
+
+    if   abs(raw_clamped) >= 60: confidence = "HIGH"
+    elif abs(raw_clamped) >= 35: confidence = "MEDIUM"
+    else:                        confidence = "LOW"
+
+    return {
+        "display_pct": display_pct,
+        "raw":         raw_clamped,
+        "label":       label,
+        "border":      border,
+        "bg":          bg,
+        "call":        call,
+        "call_col":    call_col,
+        "confidence":  confidence,
+        "components":  comps,
+        "spot":        spot,
+    }
+
+
+def render_market_pulse(cache: dict, symbol: str):
+    """Bloomberg-style unified market score panel."""
+    data = _compute_market_pulse(cache, symbol)
+    pct  = data["display_pct"]
+    raw  = data["raw"]
+    bg   = data["bg"]
+    bdr  = data["border"]
+    lbl  = data["label"]
+    call = data["call"]
+    ccol = data["call_col"]
+    conf = data["confidence"]
+    spot = data["spot"]
+    comps = data["components"]
+
+    # ── Big score bar ─────────────────────────────────────────────────────────
+    # Pct bar: left half = bearish (red), right half = bullish (green)
+    # Marker position at pct%
+    marker_left = max(1, min(98, pct))
+
+    conf_col = {"HIGH": "#1b7a2e", "MEDIUM": "#b07c00", "LOW": "#8a96b0"}[conf]
+    conf_bg  = {"HIGH": "#e8f5e9", "MEDIUM": "#fff8e1", "LOW": "#f0f3fa"}[conf]
+
+    st.markdown(f"""
+    <div style="background:{bg};border:2px solid {bdr};border-radius:14px;
+                padding:18px 20px 14px;margin-bottom:14px">
+
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                    margin-bottom:14px">
+            <div>
+                <div style="font-size:11px;color:#6b7a99;letter-spacing:1.5px;
+                             text-transform:uppercase;margin-bottom:4px">
+                    ⚡ Market Pulse &nbsp;·&nbsp; {symbol}</div>
+                <div style="font-size:26px;font-weight:800;color:{bdr};line-height:1">
+                    {lbl}</div>
+                <div style="font-size:12px;color:#6b7a99;margin-top:4px">
+                    Spot: <b style="color:#1a1a2e">{int(spot):,}</b>
+                    &nbsp;·&nbsp; Raw score: <b style="color:{bdr}">{raw:+d}</b>
+                </div>
+            </div>
+            <div style="text-align:right">
+                <div style="font-size:42px;font-weight:900;color:{bdr};line-height:1">
+                    {pct}</div>
+                <div style="font-size:11px;color:#6b7a99">/ 100</div>
+                <div style="background:{conf_bg};color:{conf_col};font-weight:700;
+                             font-size:11px;padding:3px 10px;border-radius:10px;
+                             margin-top:4px;display:inline-block">{conf} CONFIDENCE</div>
+            </div>
+        </div>
+
+        <div style="position:relative;height:12px;border-radius:6px;
+                    background:linear-gradient(to right,#ffcdd2,#fff9c4,#c8e6c9);
+                    margin-bottom:8px;overflow:visible">
+            <div style="position:absolute;left:{marker_left}%;top:-4px;
+                        width:20px;height:20px;border-radius:50%;
+                        background:{bdr};border:3px solid #fff;
+                        box-shadow:0 2px 6px rgba(0,0,0,0.2);
+                        transform:translateX(-50%)"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;
+                    color:#8a96b0;margin-bottom:14px">
+            <span>STRONG BEARISH</span><span>NEUTRAL</span><span>STRONG BULLISH</span>
+        </div>
+
+        <div style="font-size:11px;color:#6b7a99;letter-spacing:1px;
+                     text-transform:uppercase;margin-bottom:8px">Components</div>
+    """, unsafe_allow_html=True)
+
+    # ── Component rows ────────────────────────────────────────────────────────
+    rows_html = ""
+    for c in comps:
+        pts     = c["pts"]
+        max_pts = c["max"]
+        col     = c["color"]
+        # bar width: 0-100% based on abs(pts)/max_pts
+        bar_w   = int(abs(pts) / max_pts * 100) if max_pts else 0
+        bar_col = col if pts != 0 else "#e0e4ef"
+        # pts display
+        pts_str = f"{pts:+d}" if pts != 0 else "0"
+        rows_html += f"""
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;
+                    margin:3px 0;background:#ffffff;border-radius:6px;
+                    border-left:3px solid {col}">
+            <span style="color:#3a4a6b;font-size:12px;min-width:110px;
+                          font-weight:500">{c['name']}</span>
+            <span style="color:#6b7a99;font-size:11px;min-width:80px">{c['value']}</span>
+            <div style="flex:1;height:6px;background:#f0f3fa;border-radius:3px;
+                        overflow:hidden">
+                <div style="width:{bar_w}%;height:6px;background:{bar_col};
+                             border-radius:3px"></div>
+            </div>
+            <span style="color:{col};font-size:11px;font-weight:700;
+                          min-width:30px;text-align:right">{pts_str}</span>
+            <span style="color:{col};font-size:11px;min-width:100px;
+                          font-weight:600">{c['signal']}</span>
+        </div>"""
+
+    st.markdown(rows_html, unsafe_allow_html=True)
+
+    # ── Final Call ────────────────────────────────────────────────────────────
+    st.markdown(f"""
+        <div style="margin-top:12px;padding:12px 16px;background:#ffffff;
+                    border:2px solid {bdr};border-radius:8px;
+                    display:flex;align-items:center;justify-content:space-between">
+            <div>
+                <span style="font-size:11px;color:#6b7a99;
+                              letter-spacing:1px">FINAL CALL</span>
+                <div style="font-size:20px;font-weight:800;color:{ccol};
+                             margin-top:2px">{call}</div>
+            </div>
+            <div style="text-align:right;font-size:11px;color:#8a96b0">
+                Based on {len([c for c in comps if c['pts'] != 0])} active signals
+                <br>Score: {pct}/100 · {lbl}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LIVE DATA FRAGMENT — har 60 sec mein auto-refresh, page reload nahi hoga
 # ══════════════════════════════════════════════════════════════════════════════
 @st.fragment(run_every=60)          # ← KEY FIX: ye sirf data section refresh karta hai
@@ -3109,6 +3430,11 @@ def live_data_section(symbol, expiry):
     # ── Market Overview ──────────────────────────────────────────────────────
     st.markdown("### 🌐 Market Overview")
     render_market_overview(cache)
+    st.divider()
+
+    # ── MARKET PULSE — Bloomberg-style unified score ──────────────────────────
+    st.markdown("### ⚡ Market Pulse")
+    render_market_pulse(cache, symbol)
     st.divider()
 
     # ── TRADE SIGNAL — Sabse Important Panel ─────────────────────────────────
