@@ -1227,18 +1227,23 @@ def render_oi_chain(cache, symbol):
     mp_strike = mp_result.max_pain_strike if mp_result else None
 
     if mp_result:
-        sig_c = "#00c853" if mp_result.signal == "BULLISH" else (
-                "#ff1744" if mp_result.signal == "BEARISH" else "#ffd740")
+        sig_c  = "#1b7a2e" if mp_result.signal == "BULLISH" else (
+                 "#c0392b" if mp_result.signal == "BEARISH" else "#b07c00")
+        sig_bg = "#e8f5e9" if mp_result.signal == "BULLISH" else (
+                 "#ffeaea" if mp_result.signal == "BEARISH" else "#fff8e1")
         st.markdown(f"""
-        <div style="background:#1a2a3a;padding:8px 16px;border-radius:8px;
-                    margin-bottom:8px;font-size:13px;">
-            🎯 <b>Max Pain:</b> {int(mp_result.max_pain_strike)}
-            &nbsp;|&nbsp;
-            🟢 <b>Support:</b> {int(mp_result.top_pe_oi_strike)}
-            &nbsp;|&nbsp;
-            🔴 <b>Resist:</b> {int(mp_result.top_ce_oi_strike)}
-            &nbsp;|&nbsp;
-            Signal: <b style="color:{sig_c}">{mp_result.signal}</b>
+        <div style="background:#f8f9fd;border:1px solid #e0e4ef;padding:10px 16px;
+                    border-radius:8px;margin-bottom:10px;font-size:13px;
+                    display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+            <span style="color:#5a6a8a">🎯 Max Pain:
+                <b style="color:#1a1a2e">{int(mp_result.max_pain_strike)}</b></span>
+            <span style="color:#5a6a8a">🟢 Support:
+                <b style="color:#1b7a2e">{int(mp_result.top_pe_oi_strike)}</b></span>
+            <span style="color:#5a6a8a">🔴 Resist:
+                <b style="color:#c0392b">{int(mp_result.top_ce_oi_strike)}</b></span>
+            <span style="background:{sig_bg};color:{sig_c};font-weight:600;
+                         padding:3px 12px;border-radius:20px;font-size:12px">
+                {mp_result.signal}</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1295,9 +1300,8 @@ def render_oi_chain(cache, symbol):
 
     def highlight(row):
         if atm_mask[row.name]:
-            # Bright white text on green bg — clearly visible
-            return ["background-color:#1a4a00;color:#ffffff;font-weight:bold"] * len(row)
-        return [""] * len(row)
+            return ["background-color:#e8f0fe;color:#1a1a2e;font-weight:700"] * len(row)
+        return ["color:#1a1a2e"] * len(row)
 
     st.dataframe(df.style.apply(highlight, axis=1),
                  use_container_width=True, height=400, hide_index=True)
@@ -2400,42 +2404,48 @@ HFT & Institutions yahan automatic limit orders rakhte hain → Strong price rea
 
 
 def _render_factor_checklist(factors: dict):
-    """6-factor checklist — Streamlit native columns (no raw HTML embedding)."""
     if not factors:
         return
 
-    st.markdown(
-        "<div style='color:#7fb3f5;font-size:12px;font-weight:bold;"
-        "margin:10px 0 4px 0'>📋 Factor Checklist</div>",
-        unsafe_allow_html=True,
-    )
-
+    rows_html = ""
     for name, info in factors.items():
         icon, val, desc, clr = info
-        c1, c2, c3, c4 = st.columns([1, 3, 3, 4])
-        with c1:
-            st.markdown(
-                f"<div style='font-size:16px;padding-top:2px'>{icon}</div>",
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown(
-                f"<div style='color:#cccccc;font-size:12px;"
-                f"padding-top:4px'>{name}</div>",
-                unsafe_allow_html=True,
-            )
-        with c3:
-            st.markdown(
-                f"<div style='color:{clr};font-size:12px;"
-                f"font-weight:bold;padding-top:4px'>{val}</div>",
-                unsafe_allow_html=True,
-            )
-        with c4:
-            st.markdown(
-                f"<div style='color:#666666;font-size:11px;"
-                f"padding-top:5px'>{desc}</div>",
-                unsafe_allow_html=True,
-            )
+        # Badge color mapping
+        if clr in ("#00c853", "#26a69a"):
+            badge_bg, badge_txt = "#e8f5e9", "#1b7a2e"
+        elif clr in ("#ff1744", "#ef5350"):
+            badge_bg, badge_txt = "#ffeaea", "#c0392b"
+        elif clr in ("#ffd740", "#ff6d00"):
+            badge_bg, badge_txt = "#fff8e1", "#b07c00"
+        else:
+            badge_bg, badge_txt = "#f0f3fa", "#5a6a8a"
+
+        rows_html += f"""
+        <tr style="border-bottom:1px solid #eef0f6">
+            <td style="padding:9px 10px;font-size:16px;width:32px">{icon}</td>
+            <td style="padding:9px 10px;font-size:12px;color:#5a6a8a;
+                       font-weight:500;white-space:nowrap">{name}</td>
+            <td style="padding:9px 10px">
+                <span style="background:{badge_bg};color:{badge_txt};
+                             font-size:12px;font-weight:600;padding:3px 10px;
+                             border-radius:20px;white-space:nowrap">{val}</span>
+            </td>
+            <td style="padding:9px 10px;font-size:12px;color:#8a96b0">{desc}</td>
+        </tr>"""
+
+    st.markdown(f"""
+    <div style="margin:12px 0 4px">
+        <div style="font-size:11px;font-weight:600;color:#8a96b0;
+                    text-transform:uppercase;letter-spacing:0.8px;
+                    margin-bottom:8px">Factor Checklist</div>
+        <div style="background:#ffffff;border:1px solid #e0e4ef;
+                    border-radius:10px;overflow:hidden">
+            <table style="width:100%;border-collapse:collapse">
+                {rows_html}
+            </table>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_trade_signal(cache: dict, symbol: str):
@@ -2446,24 +2456,24 @@ def render_trade_signal(cache: dict, symbol: str):
 
     # ── Signal color config ───────────────────────────────────────────────────
     cfg = {
-        "BUY CE":             ("#00c853", "🟢", "#0a2a0a"),
-        "BUY PE":             ("#ff6d00", "🔴", "#2a1000"),
-        "SELL — Iron Condor": ("#7fb3f5", "💰", "#0a1a2a"),
-        "NO TRADE":           ("#555555", "⛔", "#1e2130"),
+        "BUY CE":             ("#1b7a2e", "🟢", "#f0faf2"),
+        "BUY PE":             ("#c0392b", "🔴", "#fff5f5"),
+        "SELL — Iron Condor": ("#1a56db", "💰", "#f0f4ff"),
+        "NO TRADE":           ("#8a96b0", "⛔", "#f8f9fd"),
     }
     color, icon, bg = cfg.get(s, cfg["NO TRADE"])
 
     # ── NO TRADE ──────────────────────────────────────────────────────────────
     if s == "NO TRADE":
         st.markdown(f"""
-        <div style="background:{bg};border:2px solid #333;border-radius:12px;
+        <div style="background:{bg};border:1px solid #e0e4ef;border-radius:12px;
                     padding:20px;text-align:center;margin-bottom:8px">
-            <div style="font-size:36px">{icon}</div>
-            <div style="font-size:22px;font-weight:bold;color:#555;margin-top:6px">
+            <div style="font-size:32px">{icon}</div>
+            <div style="font-size:20px;font-weight:700;color:#8a96b0;margin-top:6px">
                 NO TRADE</div>
-            <div style="color:#888;font-size:13px;margin-top:8px">
+            <div style="color:#aab0c0;font-size:13px;margin-top:8px">
                 {sig.get('reason','Mixed signals — wait karo')}</div>
-            <div style="color:#444;font-size:11px;margin-top:10px">
+            <div style="color:#c0c8d8;font-size:11px;margin-top:10px">
                 Confidence: {score:.0f}% &nbsp;|&nbsp;
                 VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
                 PCR: {sig.get('pcr',0):.2f}
@@ -2481,49 +2491,75 @@ def render_trade_signal(cache: dict, symbol: str):
         levels_str = " &nbsp;|&nbsp; ".join(filter(None, [gw_str, fl_str]))
 
         st.markdown(f"""
-        <div style="background:{bg};border:2px solid {color};border-radius:12px;padding:20px;margin-bottom:8px">
+        <div style="background:{bg};border:1.5px solid {color}44;border-radius:12px;
+                    padding:20px;margin-bottom:8px;
+                    box-shadow:0 2px 12px {color}18">
             <div style="display:flex;justify-content:space-between;align-items:center">
-                <div>
-                    <span style="font-size:30px">{icon}</span>
-                    <span style="font-size:26px;font-weight:bold;color:{color};margin-left:8px">{s}</span>
-                    <span style="font-size:20px;color:#ffffff;margin-left:8px">{sig.get('strike','')} Strike</span>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="background:{color}18;border-radius:10px;
+                                padding:8px 14px;border:1px solid {color}33">
+                        <span style="font-size:22px;font-weight:800;
+                                     color:{color}">{s}</span>
+                    </div>
+                    <span style="font-size:18px;font-weight:600;
+                                 color:#1a1a2e">{sig.get('strike','')} Strike</span>
                 </div>
                 <div style="text-align:right">
-                    <div style="color:#aaa;font-size:11px">Confidence</div>
-                    <div style="font-size:22px;font-weight:bold;color:{color}">{score:.0f}%</div>
-                    <div style="font-family:monospace;color:{color};font-size:10px">{bar}</div>
+                    <div style="font-size:10px;color:#8a96b0;
+                                text-transform:uppercase;letter-spacing:0.6px">Confidence</div>
+                    <div style="font-size:26px;font-weight:700;
+                                color:{color}">{score:.0f}%</div>
                 </div>
             </div>
-            <div style="margin-top:10px;padding:8px 12px;background:#ffffff11;border-left:3px solid {color};border-radius:4px">
-                <span style="color:#aaa;font-size:11px">&#128205; Strike Selected: </span>
-                <span style="color:#fff;font-size:12px">{strike_reason}</span>
+            <div style="margin-top:12px;padding:8px 12px;background:{color}0d;
+                        border-left:3px solid {color};border-radius:4px">
+                <span style="color:#8a96b0;font-size:11px">Strike: </span>
+                <span style="color:#1a1a2e;font-size:12px;font-weight:500">{strike_reason}</span>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-top:14px">
-                <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                    <div style="color:#aaa;font-size:11px">ENTRY</div>
-                    <div style="color:#fff;font-size:20px;font-weight:bold">&#8377;{sig.get('entry',0)}</div>
-                    <div style="color:#555;font-size:10px">per lot</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;
+                        gap:10px;margin-top:14px">
+                <div style="background:#f8f9fd;border:1px solid #e0e4ef;
+                            border-radius:8px;padding:12px;text-align:center">
+                    <div style="color:#8a96b0;font-size:10px;text-transform:uppercase;
+                                letter-spacing:0.5px">Entry</div>
+                    <div style="color:#1a1a2e;font-size:20px;font-weight:700;
+                                margin-top:4px">&#8377;{sig.get('entry',0)}</div>
+                    <div style="color:#aab0c0;font-size:10px">per unit</div>
                 </div>
-                <div style="background:#00c85322;border-radius:8px;padding:10px;text-align:center">
-                    <div style="color:#aaa;font-size:11px">TARGET</div>
-                    <div style="color:#00c853;font-size:20px;font-weight:bold">&#8377;{sig.get('target',0)}</div>
-                    <div style="color:#00c853;font-size:10px">+{sig.get('gain_pct',0)}%</div>
+                <div style="background:#e8f5e9;border:1px solid #c8e6c9;
+                            border-radius:8px;padding:12px;text-align:center">
+                    <div style="color:#5a8a6a;font-size:10px;text-transform:uppercase;
+                                letter-spacing:0.5px">Target</div>
+                    <div style="color:#1b7a2e;font-size:20px;font-weight:700;
+                                margin-top:4px">&#8377;{sig.get('target',0)}</div>
+                    <div style="color:#5a8a6a;font-size:10px">+{sig.get('gain_pct',0)}%</div>
                 </div>
-                <div style="background:#ff174422;border-radius:8px;padding:10px;text-align:center">
-                    <div style="color:#aaa;font-size:11px">STOP LOSS</div>
-                    <div style="color:#ff1744;font-size:20px;font-weight:bold">&#8377;{sig.get('sl',0)}</div>
-                    <div style="color:#ff1744;font-size:10px">-{sig.get('loss_pct',0)}%</div>
+                <div style="background:#ffeaea;border:1px solid #ffcdd2;
+                            border-radius:8px;padding:12px;text-align:center">
+                    <div style="color:#8a5a5a;font-size:10px;text-transform:uppercase;
+                                letter-spacing:0.5px">Stop Loss</div>
+                    <div style="color:#c0392b;font-size:20px;font-weight:700;
+                                margin-top:4px">&#8377;{sig.get('sl',0)}</div>
+                    <div style="color:#8a5a5a;font-size:10px">-{sig.get('loss_pct',0)}%</div>
                 </div>
-                <div style="background:#ffffff11;border-radius:8px;padding:10px;text-align:center">
-                    <div style="color:#aaa;font-size:11px">LOTS</div>
-                    <div style="color:#ffd740;font-size:20px;font-weight:bold">{sig.get('lots',1)}</div>
-                    <div style="color:#555;font-size:10px">Max loss &#8377;{sig.get('max_loss',0):,.0f}</div>
+                <div style="background:#fff8e1;border:1px solid #ffe082;
+                            border-radius:8px;padding:12px;text-align:center">
+                    <div style="color:#8a7a3a;font-size:10px;text-transform:uppercase;
+                                letter-spacing:0.5px">Lots</div>
+                    <div style="color:#b07c00;font-size:20px;font-weight:700;
+                                margin-top:4px">{sig.get('lots',1)}</div>
+                    <div style="color:#8a7a3a;font-size:10px">
+                        Max loss &#8377;{sig.get('max_loss',0):,.0f}</div>
                 </div>
             </div>
-            <div style="margin-top:10px;display:flex;justify-content:space-between;color:#666;font-size:11px">
-                <span>Max Profit: <b style="color:#00c853">&#8377;{sig.get('max_profit',0):,.0f}</b></span>
-                <span>&#9201; {sig.get('timeframe','Intraday')} &nbsp;|&nbsp; VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp; IV Rank: {sig.get('iv_rank',0):.0f}%</span>
-                <span style="color:#555">{levels_str}</span>
+            <div style="margin-top:12px;display:flex;justify-content:space-between;
+                        font-size:11px;color:#8a96b0">
+                <span>Max Profit:
+                    <b style="color:#1b7a2e">&#8377;{sig.get('max_profit',0):,.0f}</b></span>
+                <span>{sig.get('timeframe','Intraday')} &nbsp;|&nbsp;
+                    VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
+                    IV Rank: {sig.get('iv_rank',0):.0f}%</span>
+                <span style="color:#aab0c0">{levels_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
         _render_factor_checklist(sig.get("factors", {}))
