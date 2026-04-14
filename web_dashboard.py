@@ -1551,6 +1551,104 @@ def render_gex(cache: dict):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# OI WALL DETECTOR — Support / Resistance levels from OI chain
+# ══════════════════════════════════════════════════════════════════════════════
+def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
+    """
+    OI chain se market ki natural walls dhundho.
+
+    Call Wall = Jis strike pe sabse zyada CE OI hai → Resistance
+    Put Wall  = Jis strike pe sabse zyada PE OI hai → Support
+
+    Returns:
+        call_walls      : [(strike, oi_lakhs), ...] top 3, above ATM
+        put_walls       : [(strike, oi_lakhs), ...] top 3, below ATM
+        nearest_call    : nearest resistance above spot
+        nearest_put     : nearest support below spot
+        ce_warning      : human-readable resistance message
+        pe_warning      : human-readable support message
+        score_penalty   : negative int (if wall blocks target)
+    """
+    if not oi_chain or not spot:
+        return {}
+
+    atm = int(round(spot / step) * step)
+
+    # Saari strikes ka CE + PE OI collect karo
+    ce_data = {}  # strike → ce_oi
+    pe_data = {}  # strike → pe_oi
+    for row in oi_chain:
+        s = int(row.strike)
+        if row.ce_oi and row.ce_oi > 0:
+            ce_data[s] = row.ce_oi
+        if row.pe_oi and row.pe_oi > 0:
+            pe_data[s] = row.pe_oi
+
+    # Top 3 CE OI strikes at/above ATM (resistance)
+    ce_above = {s: v for s, v in ce_data.items() if s >= atm}
+    top_ce   = sorted(ce_above.items(), key=lambda x: x[1], reverse=True)[:3]
+    top_ce   = sorted(top_ce, key=lambda x: x[0])   # display: low to high
+
+    # Top 3 PE OI strikes at/below ATM (support)
+    pe_below = {s: v for s, v in pe_data.items() if s <= atm}
+    top_pe   = sorted(pe_below.items(), key=lambda x: x[1], reverse=True)[:3]
+    top_pe   = sorted(top_pe, key=lambda x: x[0], reverse=True)  # display: high to low
+
+    # Convert to lakhs for readability
+    def to_l(oi): return round(oi / 100_000, 1)
+
+    # Nearest call wall strictly above ATM
+    ce_strictly_above = [(s, v) for s, v in ce_above.items() if s > atm]
+    nearest_call = min(ce_strictly_above, key=lambda x: x[0]) if ce_strictly_above else None
+
+    # Nearest put wall strictly below ATM
+    pe_strictly_below = [(s, v) for s, v in pe_below.items() if s < atm]
+    nearest_put  = max(pe_strictly_below, key=lambda x: x[0]) if pe_strictly_below else None
+
+    score_penalty = 0
+    ce_warning    = ""
+    pe_warning    = ""
+
+    # ── Call Wall warning (for BUY CE) ────────────────────────────────────────
+    if nearest_call:
+        dist    = nearest_call[0] - atm
+        oi_l    = to_l(nearest_call[1])
+        strike  = nearest_call[0]
+        if dist <= step:
+            score_penalty -= 15
+            ce_warning = f"🧱 Bahut badi CALL WALL {strike} pe ({oi_l}L OI) — Sirf {dist} pts door! Target block ho sakta hai"
+        elif dist <= step * 2:
+            score_penalty -= 8
+            ce_warning = f"⚠️ Call Wall: {strike} pe {oi_l}L OI — {dist} pts door, thodi resistance milegi"
+        else:
+            ce_warning = f"✅ Resistance {strike} pe ({oi_l}L OI) — {dist} pts door, abhi path clear hai"
+
+    # ── Put Wall warning (for BUY PE) ─────────────────────────────────────────
+    if nearest_put:
+        dist    = atm - nearest_put[0]
+        oi_l    = to_l(nearest_put[1])
+        strike  = nearest_put[0]
+        if dist <= step:
+            score_penalty -= 15
+            pe_warning = f"🛡️ Bahut bada PUT WALL {strike} pe ({oi_l}L OI) — Sirf {dist} pts neeche! Market rok sakta hai"
+        elif dist <= step * 2:
+            score_penalty -= 8
+            pe_warning = f"⚠️ Put Wall: {strike} pe {oi_l}L OI — {dist} pts neeche, support hai"
+        else:
+            pe_warning = f"✅ Support {strike} pe ({oi_l}L OI) — {dist} pts neeche, bearish move possible"
+
+    return {
+        "call_walls":    [(s, to_l(v)) for s, v in top_ce],
+        "put_walls":     [(s, to_l(v)) for s, v in top_pe],
+        "nearest_call":  (nearest_call[0], to_l(nearest_call[1])) if nearest_call else None,
+        "nearest_put":   (nearest_put[0],  to_l(nearest_put[1]))  if nearest_put  else None,
+        "ce_warning":    ce_warning,
+        "pe_warning":    pe_warning,
+        "score_penalty": score_penalty,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TRADE SIGNAL ENGINE — Live data se automatic BUY/SELL/NO TRADE
 # ══════════════════════════════════════════════════════════════════════════════
 def generate_trade_signal(cache: dict, symbol: str) -> dict:
@@ -1725,6 +1823,29 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     else:
         factors["POC"] = ("⚪", "N/A", "VP loading...", "#555")
 
+    # ── OI Wall Detection — score adjust + factor add ────────────────────────
+    oi_walls = _detect_oi_walls(oi_chain, spot, step)
+    if oi_walls:
+        penalty = oi_walls.get("score_penalty", 0)
+        if score > 0:     # BUY CE direction
+            score = max(0, score + penalty)
+            ce_warn = oi_walls.get("ce_warning", "")
+            if penalty < -10:
+                factors["OI Wall"] = ("🧱", ce_warn, "Strong resistance — target block ho sakta hai", "#ff6d00")
+            elif penalty < 0:
+                factors["OI Wall"] = ("⚠️", ce_warn, "Resistance hai — thoda caution", "#ffd740")
+            elif oi_walls.get("nearest_call"):
+                factors["OI Wall"] = ("✅", ce_warn, "Path clear", "#00c853")
+        elif score < 0:   # BUY PE direction
+            score = min(0, score - penalty)   # penalty already negative
+            pe_warn = oi_walls.get("pe_warning", "")
+            if penalty < -10:
+                factors["OI Wall"] = ("🛡️", pe_warn, "Strong support — bearish move rok sakta hai", "#ff6d00")
+            elif penalty < 0:
+                factors["OI Wall"] = ("⚠️", pe_warn, "Support hai — thoda caution", "#ffd740")
+            elif oi_walls.get("nearest_put"):
+                factors["OI Wall"] = ("✅", pe_warn, "Path clear", "#00c853")
+
     abs_score = abs(score)
 
     # ── NO TRADE ──────────────────────────────────────────────────────────────
@@ -1853,6 +1974,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "timeframe":     "Intraday",
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
+            "oi_walls":      oi_walls,
         }
 
     # ── BUY PE ────────────────────────────────────────────────────────────────
@@ -1886,6 +2008,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "timeframe":     "Intraday",
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
+            "oi_walls":      oi_walls,
         }
 
     return {"signal": "NO TRADE", "reason": "Inconclusive", "score": abs_score,
@@ -2301,6 +2424,57 @@ def render_trade_signal(cache: dict, symbol: str):
             </div>
         </div>""", unsafe_allow_html=True)
         _render_factor_checklist(sig.get("factors", {}))
+
+        # ── OI Wall Map — human readable ──────────────────────────────────────
+        walls = sig.get("oi_walls", {})
+        if walls:
+            call_walls = walls.get("call_walls", [])
+            put_walls  = walls.get("put_walls",  [])
+            is_buy_ce  = (s == "BUY CE")
+
+            st.markdown("#### 📊 Market Structure — OI Walls")
+            col_r, col_s = st.columns(2)
+
+            with col_r:
+                st.markdown("**🧱 Resistance (Call Walls)**")
+                if call_walls:
+                    for i, (strike, oi_l) in enumerate(call_walls):
+                        bar_len   = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
+                        bar       = "█" * bar_len + "░" * (10 - bar_len)
+                        nearest   = (i == 0 and is_buy_ce)
+                        tag       = " ← ⚠️ NEAREST" if nearest else ""
+                        color_tag = "🔴" if nearest else "🟠"
+                        st.markdown(
+                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
+                        )
+                else:
+                    st.caption("Data loading...")
+
+            with col_s:
+                st.markdown("**🛡️ Support (Put Walls)**")
+                if put_walls:
+                    for i, (strike, oi_l) in enumerate(put_walls):
+                        bar_len   = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
+                        bar       = "█" * bar_len + "░" * (10 - bar_len)
+                        nearest   = (i == 0 and not is_buy_ce)
+                        tag       = " ← ⚠️ NEAREST" if nearest else ""
+                        color_tag = "🔴" if nearest else "🟢"
+                        st.markdown(
+                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
+                        )
+                else:
+                    st.caption("Data loading...")
+
+            # Plain language warning
+            warn = walls.get("ce_warning" if is_buy_ce else "pe_warning", "")
+            if warn:
+                penalty = walls.get("score_penalty", 0)
+                if penalty <= -15:
+                    st.error(warn)
+                elif penalty <= -8:
+                    st.warning(warn)
+                else:
+                    st.success(warn)
 
     # ── SELL — Iron Condor ────────────────────────────────────────────────────
     else:
