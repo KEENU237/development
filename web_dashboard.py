@@ -2410,7 +2410,6 @@ def _render_factor_checklist(factors: dict):
     rows_html = ""
     for name, info in factors.items():
         icon, val, desc, clr = info
-        # Badge color mapping
         if clr in ("#00c853", "#26a69a"):
             badge_bg, badge_txt = "#e8f5e9", "#1b7a2e"
         elif clr in ("#ff1744", "#ef5350"):
@@ -2420,32 +2419,28 @@ def _render_factor_checklist(factors: dict):
         else:
             badge_bg, badge_txt = "#f0f3fa", "#5a6a8a"
 
-        rows_html += f"""
-        <tr style="border-bottom:1px solid #eef0f6">
-            <td style="padding:9px 10px;font-size:16px;width:32px">{icon}</td>
-            <td style="padding:9px 10px;font-size:12px;color:#5a6a8a;
-                       font-weight:500;white-space:nowrap">{name}</td>
-            <td style="padding:9px 10px">
-                <span style="background:{badge_bg};color:{badge_txt};
-                             font-size:12px;font-weight:600;padding:3px 10px;
-                             border-radius:20px;white-space:nowrap">{val}</span>
-            </td>
-            <td style="padding:9px 10px;font-size:12px;color:#8a96b0">{desc}</td>
-        </tr>"""
+        rows_html += (
+            f'<div style="display:flex;align-items:center;gap:12px;'
+            f'padding:9px 14px;border-bottom:1px solid #eef0f6">'
+            f'<span style="font-size:15px;width:24px;flex-shrink:0">{icon}</span>'
+            f'<span style="font-size:12px;color:#5a6a8a;font-weight:500;'
+            f'width:80px;flex-shrink:0">{name}</span>'
+            f'<span style="background:{badge_bg};color:{badge_txt};font-size:11px;'
+            f'font-weight:600;padding:3px 10px;border-radius:20px;flex-shrink:0">{val}</span>'
+            f'<span style="font-size:11px;color:#aab0c0">{desc}</span>'
+            f'</div>'
+        )
 
-    st.markdown(f"""
-    <div style="margin:12px 0 4px">
-        <div style="font-size:11px;font-weight:600;color:#8a96b0;
-                    text-transform:uppercase;letter-spacing:0.8px;
-                    margin-bottom:8px">Factor Checklist</div>
-        <div style="background:#ffffff;border:1px solid #e0e4ef;
-                    border-radius:10px;overflow:hidden">
-            <table style="width:100%;border-collapse:collapse">
-                {rows_html}
-            </table>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="margin:14px 0 4px">'
+        f'<div style="font-size:10px;font-weight:600;color:#8a96b0;'
+        f'text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">'
+        f'Factor Checklist</div>'
+        f'<div style="background:#ffffff;border:1px solid #e0e4ef;border-radius:10px;overflow:hidden">'
+        f'{rows_html}'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
 
 
 def render_trade_signal(cache: dict, symbol: str):
