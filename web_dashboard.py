@@ -246,6 +246,10 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     risk_obj = st.session_state["risk"]
     cache    = {}
 
+    # ── Other symbol (NIFTY↔BANKNIFTY) for dual signal panel ─────────────────
+    other_symbol = {"NIFTY": "BANKNIFTY", "BANKNIFTY": "NIFTY",
+                    "FINNIFTY": "NIFTY"}.get(symbol, "BANKNIFTY")
+
     # ── Worker functions (parallel chalenge) ─────────────────────────────────
     def _fetch_prices():
         try:
@@ -308,18 +312,39 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
             logger.error(f"VP fetch: {exc}")
             return {}
 
+    def _fetch_other_oi_chain():
+        """Other symbol ki OI chain — dual signal panel ke liye."""
+        try:
+            other_exp = get_nearest_expiry(other_symbol, kite=kite.kite).isoformat()
+            chain     = pcr_obj.get_oi_chain(other_symbol, other_exp, 10)
+            return other_exp, chain
+        except Exception as exc:
+            logger.error(f"Other OI Chain ({other_symbol}): {exc}")
+            return expiry, []
+
+    def _fetch_other_max_pain():
+        """Other symbol ka max pain — dual signal panel ke liye."""
+        try:
+            other_exp = get_nearest_expiry(other_symbol, kite=kite.kite).isoformat()
+            return mp_obj.compute(other_symbol, other_exp)
+        except Exception as exc:
+            logger.error(f"Other MaxPain ({other_symbol}): {exc}")
+            return None
+
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        f_prices   = ex.submit(_fetch_prices)
-        f_oi       = ex.submit(_fetch_oi_chain)
-        f_mp       = ex.submit(_fetch_max_pain)
-        f_pcr_n    = ex.submit(_fetch_pcr, "NIFTY")
-        f_pcr_bn   = ex.submit(_fetch_pcr, "BANKNIFTY")
-        f_uoa      = ex.submit(_fetch_uoa)
-        f_risk     = ex.submit(_fetch_risk)
-        f_vp       = ex.submit(_fetch_vp)
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        f_prices      = ex.submit(_fetch_prices)
+        f_oi          = ex.submit(_fetch_oi_chain)
+        f_mp          = ex.submit(_fetch_max_pain)
+        f_pcr_n       = ex.submit(_fetch_pcr, "NIFTY")
+        f_pcr_bn      = ex.submit(_fetch_pcr, "BANKNIFTY")
+        f_uoa         = ex.submit(_fetch_uoa)
+        f_risk        = ex.submit(_fetch_risk)
+        f_vp          = ex.submit(_fetch_vp)
+        f_other_oi    = ex.submit(_fetch_other_oi_chain)
+        f_other_mp    = ex.submit(_fetch_other_max_pain)
 
     # ── Collect results (timeout se kabhi hang nahi hoga) ────────────────────
     def _safe(fut, default, timeout=TIMEOUT):
@@ -364,6 +389,30 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     except Exception as exc:
         logger.error(f"GEX: {exc}")
         cache["gex_data"] = {}
+
+    # ── Other symbol cache — dual signal panel ke liye ────────────────────────
+    other_oi_result          = _safe(f_other_oi, (expiry, []))
+    cache["other_symbol"]    = other_symbol
+    cache["other_expiry"]    = other_oi_result[0]
+    cache["other_oi_chain"]  = other_oi_result[1]
+    cache["other_mp_result"] = _safe(f_other_mp, None)
+
+    # Build mini-cache: prices + PCR shared; OI/MP from other symbol
+    _other_mini = {
+        "prices":    cache["prices"],
+        "oi_chain":  cache["other_oi_chain"],
+        "mp_result": cache["other_mp_result"],
+        "pcr_data":  cache["pcr_data"],
+        "iv_data":   {},   # no extra API calls; GEX will use VIX fallback
+        "vp_data":   {},
+        "expiry":    cache["other_expiry"],
+    }
+    try:
+        _other_mini["gex_data"] = _calc_gex(other_symbol, cache["other_expiry"], _other_mini)
+    except Exception as exc:
+        logger.error(f"Other GEX: {exc}")
+        _other_mini["gex_data"] = {}
+    cache["other_cache"] = _other_mini
 
     cache["fetched_at"] = datetime.now().strftime("%H:%M:%S")
     return cache
@@ -3237,9 +3286,20 @@ def live_data_section(symbol, expiry):
     render_market_overview(cache)
     st.divider()
 
-    # ── TRADE SIGNAL — Sabse Important Panel ─────────────────────────────────
-    st.markdown("### 🎯 Trade Signal")
-    render_trade_signal(cache, symbol)
+    # ── TRADE SIGNALS — NIFTY + BANKNIFTY side by side ──────────────────────
+    other_sym   = cache.get("other_symbol", "BANKNIFTY" if symbol == "NIFTY" else "NIFTY")
+    other_cache = cache.get("other_cache", {})
+
+    col_sig1, col_sig2 = st.columns(2)
+    with col_sig1:
+        st.markdown(f"### 🎯 Trade Signal — {symbol}")
+        render_trade_signal(cache, symbol)
+    with col_sig2:
+        st.markdown(f"### 🎯 Trade Signal — {other_sym}")
+        if other_cache:
+            render_trade_signal(other_cache, other_sym)
+        else:
+            st.info("⏳ Loading...")
     st.divider()
 
     # ── OI Chain | UOA ───────────────────────────────────────────────────────
