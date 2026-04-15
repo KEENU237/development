@@ -2034,22 +2034,25 @@ def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 def generate_trade_signal(cache: dict, symbol: str) -> dict:
     """
-    Smart Trade Signal Engine v2.0
+    Smart Trade Signal Engine v3.0
     ─────────────────────────────────────────────────────────
-    6 factors analyze karta hai:
-      1. PCR value + trend
-      2. OI Build signal (FL/FS/LU/SC)
-      3. VIX level
-      4. IV Rank
-      5. GEX Regime
-      6. Max Pain / Support / Resistance
+    8 factors — confluence required (min 3 agree):
+      1. PCR value           (±15)
+      2. PCR trend           (±8)   — separate, reduced to avoid double-count
+      3. OI Build + LTP verify (±20) — distinguishes buyers vs writers
+      4. VIX level           (±10)
+      5. IV Rank             (±10)
+      6. GEX Regime          (±10)
+      7. Max Pain direction  (±8)   — FIXED: now contributes to score
+      8. Volume Profile POC  (±10)
 
-    Smart Strike Selection:
-      Score  > 60 + IV < 30  → 1 OTM strike (cheap + leveraged)
-      Score 30–60             → ATM strike (safe)
-      VIX > 20                → ATM only (safer in high fear)
-      Sell mode               → OI-based resistance/support strikes
+    Confluence gate: abs_score >= 35 AND >= 3 factors in same direction
+    Expiry day: NO buying options — only SELL or NO TRADE
+    Market open (9:15-9:45): flag as HIGH RISK
     """
+    from datetime import date, time as dtime
+    import datetime as _dt
+
     sym_map = {
         "NIFTY":     "NSE:NIFTY 50",
         "BANKNIFTY": "NSE:NIFTY BANK",
@@ -2061,6 +2064,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     iv_data   = cache.get("iv_data",  {})
     mp_result = cache.get("mp_result")
     gex_data  = cache.get("gex_data", {})
+    vp_data   = cache.get("vp_data",  {})
 
     spot = prices.get(sym_map.get(symbol, ""), 0)
     vix  = prices.get("NSE:INDIA VIX", 0)
@@ -2072,12 +2076,34 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     step      = 50 if symbol == "NIFTY" else 100
     atm       = round(spot / step) * step
     lot       = get_lot_size(symbol)
-    MAX_LOSS  = 2000   # 2% of ₹1L
+    MAX_LOSS  = 3000   # ₹3000 max risk per trade
 
-    # ── Factor checklist (dikhega dashboard mein) ─────────────────────────────
-    factors = {}
+    factors      = {}
+    bull_count   = 0   # how many factors are bullish
+    bear_count   = 0   # how many factors are bearish
 
-    # ── 1. PCR ────────────────────────────────────────────────────────────────
+    # ── Time of day check ─────────────────────────────────────────────────────
+    now_time     = _dt.datetime.now().time()
+    opening_risk = dtime(9, 15) <= now_time <= dtime(9, 45)
+    closing_risk = now_time >= dtime(15, 15)
+    time_warning = ""
+    if opening_risk:
+        time_warning = "⚠️ 9:15-9:45 — High volatility window. Wait for 9:45 for cleaner signals."
+    elif closing_risk:
+        time_warning = "⚠️ Market closing soon — avoid fresh entries."
+
+    # ── Expiry day check ──────────────────────────────────────────────────────
+    today         = date.today()
+    expiry_str    = cache.get("expiry", "")
+    is_expiry_day = False
+    try:
+        if expiry_str:
+            exp_date      = date.fromisoformat(expiry_str)
+            is_expiry_day = (today == exp_date)
+    except Exception:
+        pass
+
+    # ── 1. PCR Value (±15) ────────────────────────────────────────────────────
     pcr_value = 0
     pcr_info  = pcr_data.get(symbol)
     pcr_trend = "→"
@@ -2085,78 +2111,125 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         r, trend = pcr_info
         pcr_value = r.pcr
         pcr_trend = trend
-        if r.pcr > 1.2:
-            score += 20
-            factors["PCR"] = ("✅", f"{r.pcr:.2f} {trend}", "Bullish", "#00c853")
-        elif r.pcr < 0.8:
-            score -= 20
-            factors["PCR"] = ("❌", f"{r.pcr:.2f} {trend}", "Bearish", "#ff1744")
+        if r.pcr >= 1.3:
+            score += 15; bull_count += 1
+            factors["PCR"] = ("✅", f"{r.pcr:.2f} {trend}", "Strong Bullish (>1.3)", "#00c853")
+        elif r.pcr >= 1.0:
+            score += 8; bull_count += 1
+            factors["PCR"] = ("✅", f"{r.pcr:.2f} {trend}", "Bullish (1.0–1.3)", "#69f0ae")
+        elif r.pcr <= 0.7:
+            score -= 15; bear_count += 1
+            factors["PCR"] = ("❌", f"{r.pcr:.2f} {trend}", "Strong Bearish (<0.7)", "#ff1744")
+        elif r.pcr <= 1.0:
+            score -= 8; bear_count += 1
+            factors["PCR"] = ("❌", f"{r.pcr:.2f} {trend}", "Bearish (0.7–1.0)", "#ff6d00")
         else:
-            factors["PCR"] = ("⚠️", f"{r.pcr:.2f} {trend}", "Neutral", "#ffd740")
-        if trend == "▲":
-            score += 15
-        elif trend == "▼":
-            score -= 15
-    else:
-        factors["PCR"] = ("⚠️", "N/A", "No data", "#555")
+            factors["PCR"] = ("⚪", f"{r.pcr:.2f} {trend}", "Neutral", "#888")
 
-    # ── 2. OI Build Signal ────────────────────────────────────────────────────
-    # Threshold = 5% of total OI at that strike (min 200, max 5000)
-    # Fixed 500 ki jagah relative threshold — expiry week mein false signals nahi aayenge
-    atm_build = "⚪"
+        # ── 2. PCR Trend (±8) — separate factor, reduced weight ───────────────
+        if trend == "▲":
+            score += 8; bull_count += 1
+            factors["PCR Trend"] = ("✅", f"Rising {trend}", "Puts increasing — Bullish pressure", "#00c853")
+        elif trend == "▼":
+            score -= 8; bear_count += 1
+            factors["PCR Trend"] = ("❌", f"Falling {trend}", "Calls increasing — Bearish pressure", "#ff6d00")
+        else:
+            factors["PCR Trend"] = ("⚪", f"Flat {trend}", "No trend change", "#888")
+    else:
+        factors["PCR"]       = ("⚪", "N/A", "No data", "#555")
+        factors["PCR Trend"] = ("⚪", "N/A", "No data", "#555")
+
+    # ── 3. OI Build — LTP verified (±20) ─────────────────────────────────────
+    # OI increase + LTP increase = Buyers entering (real conviction)
+    # OI increase + LTP decrease = Writers entering (opposite direction)
+    atm_build  = "⚪"
     atm_ce_ltp = atm_pe_ltp = 0
     for row in oi_chain:
         if abs(row.strike - atm) <= step:
             atm_ce_ltp = row.ce_ltp
             atm_pe_ltp = row.pe_ltp
             total_oi_at_strike = (row.ce_oi or 0) + (row.pe_oi or 0)
-            oi_threshold = max(200, min(5000, int(total_oi_at_strike * 0.05)))
+            oi_threshold = max(300, min(8000, int(total_oi_at_strike * 0.06)))
 
-            if row.ce_oi_chg > oi_threshold:
-                atm_build = "FL"; score += 25
-                factors["OI Build"] = ("✅", f"Fresh Long (+{row.ce_oi_chg:,})", "Bulls entering", "#00c853")
-            elif row.pe_oi_chg > oi_threshold:
-                atm_build = "FS"; score -= 25
-                factors["OI Build"] = ("❌", f"Fresh Short (+{row.pe_oi_chg:,})", "Bears entering", "#ff1744")
-            elif row.ce_oi_chg < -oi_threshold:
-                atm_build = "LU"; score -= 10
-                factors["OI Build"] = ("⚠️", f"Long Unwind ({row.ce_oi_chg:,})", "Bulls exiting", "#ff6d00")
-            elif row.pe_oi_chg < -oi_threshold:
-                atm_build = "SC"; score += 10
-                factors["OI Build"] = ("✅", f"Short Cover ({row.pe_oi_chg:,})", "Bears exiting", "#00c853")
+            ce_chg = row.ce_oi_chg or 0
+            pe_chg = row.pe_oi_chg or 0
+
+            if ce_chg > oi_threshold:
+                # CE OI up — Fresh CE buying = Bullish
+                atm_build = "FL"; score += 20; bull_count += 1
+                factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | LTP {atm_ce_ltp:.0f}",
+                                       "Fresh Long — Bulls entering", "#00c853")
+
+            elif pe_chg > oi_threshold:
+                # PE OI up — need LTP to verify direction
+                if atm_pe_ltp > 0:
+                    # PE OI up + PE LTP rising = Put buyers (bearish conviction)
+                    atm_build = "FS"; score -= 20; bear_count += 1
+                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | LTP {atm_pe_ltp:.0f}",
+                                           "Fresh Put Buy — Bears entering", "#ff1744")
+                else:
+                    # PE OI up but LTP data not available — treat as bearish
+                    atm_build = "FS"; score -= 15; bear_count += 1
+                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,}",
+                                           "PE OI building — Bearish", "#ff6d00")
+
+            elif ce_chg < -oi_threshold:
+                # CE OI unwinding — Bulls exiting, mild bearish
+                atm_build = "LU"; score -= 10; bear_count += 1
+                factors["OI Build"] = ("⚠️", f"CE OI {ce_chg:,}",
+                                       "Long Unwind — Bulls exiting", "#ff6d00")
+
+            elif pe_chg < -oi_threshold:
+                # PE OI unwinding — Bears exiting, mild bullish
+                atm_build = "SC"; score += 10; bull_count += 1
+                factors["OI Build"] = ("✅", f"PE OI {pe_chg:,}",
+                                       "Short Cover — Bears exiting", "#69f0ae")
             else:
-                factors["OI Build"] = ("⚪", f"Neutral (threshold {oi_threshold:,})", "No significant change", "#555")
+                factors["OI Build"] = ("⚪", f"Threshold {oi_threshold:,} not breached",
+                                       "No significant OI change", "#888")
             break
-    if "OI Build" not in factors:
-        factors["OI Build"] = ("⚪", "⚪", "Waiting for OI data", "#555")
 
-    # ── 3. VIX ────────────────────────────────────────────────────────────────
+    if "OI Build" not in factors:
+        factors["OI Build"] = ("⚪", "No data", "OI chain not loaded", "#555")
+
+    # ── 4. VIX (±10) ─────────────────────────────────────────────────────────
     sell_mode = False
     if vix > 0:
-        if vix < 15:
-            score += 10
-            factors["VIX"] = ("✅", f"{vix:.1f}", "Low fear — Buy ok", "#00c853")
-        elif vix > 20:
-            score -= 10
-            sell_mode = True
-            factors["VIX"] = ("⚠️", f"{vix:.1f}", "High fear — Sell premium", "#ffd740")
+        if vix < 13:
+            score += 10; bull_count += 1
+            factors["VIX"] = ("✅", f"{vix:.1f}", "Very low fear — Buy confidently", "#00c853")
+        elif vix < 17:
+            score += 5; bull_count += 1
+            factors["VIX"] = ("✅", f"{vix:.1f}", "Low fear — Buy ok", "#69f0ae")
+        elif vix < 20:
+            factors["VIX"] = ("⚪", f"{vix:.1f}", "Moderate — Neutral", "#ffd740")
+        elif vix < 25:
+            score -= 10; sell_mode = True
+            factors["VIX"] = ("⚠️", f"{vix:.1f}", "High fear — Prefer selling premium", "#ffd740")
         else:
-            factors["VIX"] = ("⚠️", f"{vix:.1f}", "Moderate", "#ffd740")
+            score -= 10; sell_mode = True; bear_count += 1
+            factors["VIX"] = ("❌", f"{vix:.1f}", "Extreme fear — DO NOT buy options", "#ff1744")
     else:
         factors["VIX"] = ("⚪", "N/A", "No data", "#555")
 
-    # ── 4. IV Rank ────────────────────────────────────────────────────────────
+    # ── 5. IV Rank (±10) ─────────────────────────────────────────────────────
     iv_rank = iv_data.get("iv_rank", 50)
-    if iv_rank > 60:
+    if iv_rank > 70:
+        sell_mode = True; score -= 5
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Very expensive — Strong sell signal", "#ff6d00")
+    elif iv_rank > 55:
         sell_mode = True
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Expensive — Sell", "#ffd740")
-    elif iv_rank < 30:
-        score += 10
-        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Cheap — Buy ok", "#00c853")
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Expensive — Sell premium", "#ffd740")
+    elif iv_rank < 20:
+        score += 10; bull_count += 1
+        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Very cheap — Buy options now", "#00c853")
+    elif iv_rank < 35:
+        score += 5; bull_count += 1
+        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Cheap — Buying ok", "#69f0ae")
     else:
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Normal", "#ffd740")
+        factors["IV Rank"] = ("⚪", f"{iv_rank:.0f}%", "Normal IV — Neutral", "#888")
 
-    # ── 5. GEX ────────────────────────────────────────────────────────────────
+    # ── 6. GEX Regime (±10) ──────────────────────────────────────────────────
     gex_regime = gex_data.get("regime",    "NEUTRAL")
     gex_total  = gex_data.get("total_gex", 0)
     gamma_wall = gex_data.get("gamma_wall", atm)
@@ -2164,94 +2237,124 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
 
     if gex_regime == "RANGE BOUND":
         score -= 10; sell_mode = True
-        factors["GEX"] = ("⚠️", f"+{gex_total:.1f}Cr", "Range bound — Sell", "#ffd740")
+        factors["GEX"] = ("⚠️", f"{gex_total:+.1f}Cr", "Range bound — MM will suppress moves", "#ffd740")
     elif gex_regime == "VOLATILE / TRENDING":
-        score += 10 if score > 0 else -10
-        factors["GEX"] = ("✅", f"{gex_total:.1f}Cr", "Volatile — Buy ok", "#00c853")
+        # Amplify existing direction
+        bonus = +10 if score > 0 else -10
+        score += bonus
+        if bonus > 0: bull_count += 1
+        else: bear_count += 1
+        factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — Directional move likely", "#00c853")
     else:
-        factors["GEX"] = ("⚪", f"{gex_total:.1f}Cr", "Neutral", "#555")
+        factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Neutral GEX — No strong push", "#888")
 
-    # ── 6. Max Pain ───────────────────────────────────────────────────────────
+    # ── 7. Max Pain Direction (±8) — FIXED ───────────────────────────────────
     top_ce_oi = mp_result.top_ce_oi_strike if mp_result else int(atm + step * 4)
     top_pe_oi = mp_result.top_pe_oi_strike if mp_result else int(atm - step * 4)
     mp_strike = mp_result.max_pain_strike  if mp_result else atm
 
-    mp_dist = abs(spot - mp_strike)
-    if mp_dist < step * 2:
-        factors["Max Pain"] = ("✅", f"{int(mp_strike)}", "Near ATM — Balanced", "#00c853")
-    elif spot > mp_strike:
-        factors["Max Pain"] = ("⚠️", f"{int(mp_strike)}", "Above MP — may pull down", "#ffd740")
+    if mp_result and spot:
+        dist_pct = (mp_strike - spot) / spot * 100
+        if dist_pct > 0.5:          # Spot below max pain → pull UP
+            score += 8; bull_count += 1
+            factors["Max Pain"] = ("✅", f"MP {int(mp_strike)} ▲{dist_pct:.1f}%",
+                                   "Spot below Max Pain — price may drift UP", "#00c853")
+        elif dist_pct < -0.5:       # Spot above max pain → pull DOWN
+            score -= 8; bear_count += 1
+            factors["Max Pain"] = ("❌", f"MP {int(mp_strike)} ▼{abs(dist_pct):.1f}%",
+                                   "Spot above Max Pain — price may drift DOWN", "#ff1744")
+        else:
+            factors["Max Pain"] = ("⚪", f"MP {int(mp_strike)} ≈ Spot",
+                                   "Near max pain — balanced, no pull", "#888")
     else:
-        factors["Max Pain"] = ("⚠️", f"{int(mp_strike)}", "Below MP — may pull up", "#ffd740")
+        factors["Max Pain"] = ("⚪", "N/A", "Max pain not available", "#555")
 
-    # ── 7. Volume Profile POC ─────────────────────────────────────────────────
-    vp_data   = cache.get("vp_data", {})
+    # ── 8. Volume Profile POC (±10) ──────────────────────────────────────────
     poc_level = vp_data.get("poc")
     vp_step   = vp_data.get("step", step)
     if poc_level and spot:
         poc_dist = spot - poc_level
-        if poc_dist > vp_step:          # Price above POC → Bullish
-            score += 10
-            factors["POC"] = ("✅", f"{poc_level}  ▲{poc_dist:.0f}pts",
-                              "Price above POC — Bullish", "#00c853")
-        elif poc_dist < -vp_step:       # Price below POC → Bearish
-            score -= 10
-            factors["POC"] = ("❌", f"{poc_level}  ▼{abs(poc_dist):.0f}pts",
-                              "Price below POC — Bearish", "#ff1744")
-        else:                           # At POC → key S/R
-            factors["POC"] = ("⚠️", f"{poc_level}  ↔ AT POC",
-                              "Strongest S/R — watch for breakout", "#ffd740")
+        if poc_dist > vp_step:
+            score += 10; bull_count += 1
+            factors["Vol POC"] = ("✅", f"POC {int(poc_level)} | +{poc_dist:.0f}pts",
+                                  "Price above POC — Bullish structure", "#00c853")
+        elif poc_dist < -vp_step:
+            score -= 10; bear_count += 1
+            factors["Vol POC"] = ("❌", f"POC {int(poc_level)} | {poc_dist:.0f}pts",
+                                  "Price below POC — Bearish structure", "#ff1744")
+        else:
+            factors["Vol POC"] = ("⚪", f"POC {int(poc_level)} ↔ AT POC",
+                                  "At strongest S/R — wait for breakout", "#ffd740")
     else:
-        factors["POC"] = ("⚪", "N/A", "VP loading...", "#555")
+        factors["Vol POC"] = ("⚪", "N/A", "VP loading...", "#555")
 
-    # ── OI Wall Detection — score adjust + factor add ────────────────────────
+    # ── OI Wall Detection ─────────────────────────────────────────────────────
     oi_walls = _detect_oi_walls(oi_chain, spot, step)
     if oi_walls:
         penalty = oi_walls.get("score_penalty", 0)
-        if score > 0:     # BUY CE direction
+        if score > 0:
             score = max(0, score + penalty)
             ce_warn = oi_walls.get("ce_warning", "")
             if penalty < -10:
-                factors["OI Wall"] = ("🧱", ce_warn, "Strong resistance — target block ho sakta hai", "#ff6d00")
+                factors["OI Wall"] = ("🧱", ce_warn, "Strong resistance ahead — target may get blocked", "#ff6d00")
             elif penalty < 0:
-                factors["OI Wall"] = ("⚠️", ce_warn, "Resistance hai — thoda caution", "#ffd740")
+                factors["OI Wall"] = ("⚠️", ce_warn, "Resistance present — reduce size", "#ffd740")
             elif oi_walls.get("nearest_call"):
-                factors["OI Wall"] = ("✅", ce_warn, "Path clear", "#00c853")
-        elif score < 0:   # BUY PE direction
-            score = min(0, score - penalty)   # penalty already negative
+                factors["OI Wall"] = ("✅", ce_warn, "Path clear above", "#00c853")
+        elif score < 0:
+            score = min(0, score - penalty)
             pe_warn = oi_walls.get("pe_warning", "")
             if penalty < -10:
-                factors["OI Wall"] = ("🛡️", pe_warn, "Strong support — bearish move rok sakta hai", "#ff6d00")
+                factors["OI Wall"] = ("🛡️", pe_warn, "Strong support below — bearish move may stall", "#ff6d00")
             elif penalty < 0:
-                factors["OI Wall"] = ("⚠️", pe_warn, "Support hai — thoda caution", "#ffd740")
+                factors["OI Wall"] = ("⚠️", pe_warn, "Support present — reduce size", "#ffd740")
             elif oi_walls.get("nearest_put"):
-                factors["OI Wall"] = ("✅", pe_warn, "Path clear", "#00c853")
+                factors["OI Wall"] = ("✅", pe_warn, "Path clear below", "#00c853")
 
     abs_score = abs(score)
 
-    # ── NO TRADE ──────────────────────────────────────────────────────────────
-    if abs_score < 30:
+    # ── Confluence Gate — min 3 factors must agree ────────────────────────────
+    if score > 0:
+        confluence_ok = bull_count >= 3
+        confluence_msg = f"{bull_count}/8 bullish factors"
+    elif score < 0:
+        confluence_ok = bear_count >= 3
+        confluence_msg = f"{bear_count}/8 bearish factors"
+    else:
+        confluence_ok = False
+        confluence_msg = "0/8"
+
+    # ── Expiry Day — no buying ─────────────────────────────────────────────────
+    if is_expiry_day and abs_score >= 35 and not sell_mode:
+        sell_mode = True   # force to sell or no trade on expiry
+        factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
+                                "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
+
+    # ── NO TRADE — insufficient score or confluence ───────────────────────────
+    if abs_score < 35 or not confluence_ok:
+        reason = "Signals mixed" if abs_score < 35 else f"Only {confluence_msg} — need 3+ to confirm"
         return {
-            "signal":  "NO TRADE",
-            "reason":  "Signals mixed — setup clear nahi hai, wait karo",
-            "score":   abs_score,
-            "factors": factors,
-            "vix":     vix,
-            "pcr":     pcr_value,
-            "build":   atm_build,
+            "signal":        "NO TRADE",
+            "reason":        reason,
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
-    # ── SELL — Iron Condor ────────────────────────────────────────────────────
-    if sell_mode and iv_rank > 55:
-        # CE sell: top CE OI strike (natural resistance)
+    # ── SELL — Iron Condor / Strangle ────────────────────────────────────────
+    if sell_mode and iv_rank > 50:
         sell_ce = int(top_ce_oi)
         sell_pe = int(top_pe_oi)
 
-        # Gamma wall adjust — sell above wall for CE
+        # Gamma wall adjust — sell above/below wall
         if gamma_wall and gamma_wall > sell_ce:
             sell_ce = int(gamma_wall) + step
 
-        # Estimate premiums from OI chain
         ce_prem = pe_prem = 0
         for row in oi_chain:
             if int(row.strike) == sell_ce: ce_prem = row.ce_ltp
@@ -2259,79 +2362,81 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
 
         total_prem   = ce_prem + pe_prem
         max_profit_r = round(total_prem * lot)
-        sl_premium   = round(total_prem * 2)
+        sl_premium   = round(total_prem * 1.5)   # 1.5x collected = exit
 
         return {
-            "signal":       "SELL — Iron Condor",
-            "sell_ce":      sell_ce,
-            "sell_pe":      sell_pe,
-            "ce_prem":      ce_prem,
-            "pe_prem":      pe_prem,
-            "total_prem":   round(total_prem, 1),
-            "max_profit_r": max_profit_r,
-            "sl_premium":   sl_premium,
-            "sl_rule":      f"Exit agar koi bhi side ₹{sl_premium:.0f} ho jaye",
-            "score":        min(abs_score + 20, 100),
-            "factors":      factors,
-            "vix":          vix,
-            "pcr":          pcr_value,
-            "iv_rank":      iv_rank,
-            "timeframe":    "Weekly / Swing",
-            "gamma_wall":   gamma_wall,
-            "flip_level":   flip_level,
-            "strike_reason": f"CE at Resistance ({sell_ce}), PE at Support ({sell_pe})",
+            "signal":        "SELL — Iron Condor",
+            "sell_ce":       sell_ce,
+            "sell_pe":       sell_pe,
+            "ce_prem":       ce_prem,
+            "pe_prem":       pe_prem,
+            "total_prem":    round(total_prem, 1),
+            "max_profit_r":  max_profit_r,
+            "sl_premium":    sl_premium,
+            "sl_rule":       f"Exit if either side crosses ₹{sl_premium:.0f}",
+            "score":         min(abs_score + 20, 100),
+            "confluence":    confluence_msg,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "iv_rank":       iv_rank,
+            "timeframe":     "Weekly / Swing",
+            "gamma_wall":    gamma_wall,
+            "flip_level":    flip_level,
+            "strike_reason": f"CE Resistance: {sell_ce} | PE Support: {sell_pe}",
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
     # ── Smart Strike Selection for BUY ────────────────────────────────────────
     def _pick_strike_and_ltp(direction: str):
-        """
-        direction: 'CE' or 'PE'
-        Returns (strike, ltp, reason)
-        """
-        # ATM is default
         chosen = atm
         reason = "ATM strike (safest)"
 
-        # Strong signal + cheap IV → 1 OTM (more leverage)
-        if abs_score >= 55 and iv_rank < 30 and vix < 18:
-            if direction == "CE":
-                chosen = atm + step
-                reason = f"1 OTM ({atm+step}) — Strong signal + Cheap IV = More leverage"
-            else:
-                chosen = atm - step
-                reason = f"1 OTM ({atm-step}) — Strong signal + Cheap IV = More leverage"
+        # Very strong signal + very cheap IV → 1 OTM
+        if abs_score >= 60 and iv_rank < 25 and vix < 16:
+            chosen = atm + step if direction == "CE" else atm - step
+            reason = f"1 OTM — Very strong signal + cheap IV ({iv_rank:.0f}%)"
 
-        # High VIX → stick to ATM
-        elif vix > 20:
+        # High VIX or expiry day → ATM only
+        elif vix > 20 or is_expiry_day:
             chosen = atm
-            reason = f"ATM ({atm}) — VIX high, ATM safer"
+            reason = f"ATM — {'VIX high' if vix > 20 else 'Expiry day'}, staying safe"
 
         # Near gamma wall → use wall strike
         elif gamma_wall and abs(atm - gamma_wall) <= step * 2:
             chosen = int(gamma_wall)
-            reason = f"Gamma Wall ({int(gamma_wall)}) — Strongest magnet level"
+            reason = f"Gamma Wall {int(gamma_wall)} — strongest magnetic level"
 
-        # Get LTP from OI chain
         ltp = 0
         for row in oi_chain:
             if int(row.strike) == chosen:
                 ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
                 break
-
-        # Fallback estimate
         if ltp <= 0:
             ltp = round(spot * 0.003)
 
         return int(chosen), ltp, reason
 
+    # ── Dynamic Target/SL based on VIX ───────────────────────────────────────
+    # Low VIX → tighter moves → tighter SL; High VIX → wider swings → wider SL
+    if vix < 15:
+        gain_mult, sl_mult = 1.50, 0.70   # 50% target, 30% SL
+    elif vix < 20:
+        gain_mult, sl_mult = 1.42, 0.72   # 42% target, 28% SL
+    else:
+        gain_mult, sl_mult = 1.35, 0.65   # 35% target, 35% SL (wide for high VIX)
+
     # ── BUY CE ────────────────────────────────────────────────────────────────
-    if score >= 30:
+    if score >= 35:
         strike, entry, strike_reason = _pick_strike_and_ltp("CE")
-        entry  = max(entry, 5)
-        target = round(entry * 1.42)
-        sl     = round(entry * 0.72)
-        sl_pts = entry - sl
-        lots   = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        entry     = max(entry, 5)
+        target    = round(entry * gain_mult)
+        sl        = round(entry * sl_mult)
+        sl_pts    = entry - sl
+        lots      = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        gain_pct  = round((gain_mult - 1) * 100)
+        loss_pct  = round((1 - sl_mult) * 100)
 
         return {
             "signal":        "BUY CE",
@@ -2340,13 +2445,14 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "entry":         entry,
             "target":        target,
             "sl":            sl,
-            "gain_pct":      42,
-            "loss_pct":      28,
+            "gain_pct":      gain_pct,
+            "loss_pct":      loss_pct,
             "lot_size":      lot,
             "lots":          lots,
             "max_loss":      round(sl_pts * lot * lots),
             "max_profit":    round((target - entry) * lot * lots),
             "score":         min(score, 100),
+            "confluence":    confluence_msg,
             "factors":       factors,
             "vix":           vix,
             "pcr":           pcr_value,
@@ -2356,16 +2462,20 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
             "oi_walls":      oi_walls,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
     # ── BUY PE ────────────────────────────────────────────────────────────────
-    if score <= -30:
+    if score <= -35:
         strike, entry, strike_reason = _pick_strike_and_ltp("PE")
-        entry  = max(entry, 5)
-        target = round(entry * 1.42)
-        sl     = round(entry * 0.72)
-        sl_pts = entry - sl
-        lots   = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        entry     = max(entry, 5)
+        target    = round(entry * gain_mult)
+        sl        = round(entry * sl_mult)
+        sl_pts    = entry - sl
+        lots      = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        gain_pct  = round((gain_mult - 1) * 100)
+        loss_pct  = round((1 - sl_mult) * 100)
 
         return {
             "signal":        "BUY PE",
@@ -2374,13 +2484,14 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "entry":         entry,
             "target":        target,
             "sl":            sl,
-            "gain_pct":      42,
-            "loss_pct":      28,
+            "gain_pct":      gain_pct,
+            "loss_pct":      loss_pct,
             "lot_size":      lot,
             "lots":          lots,
             "max_loss":      round(sl_pts * lot * lots),
             "max_profit":    round((target - entry) * lot * lots),
             "score":         min(abs_score, 100),
+            "confluence":    confluence_msg,
             "factors":       factors,
             "vix":           vix,
             "pcr":           pcr_value,
@@ -2390,10 +2501,12 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
             "oi_walls":      oi_walls,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
-    return {"signal": "NO TRADE", "reason": "Inconclusive", "score": abs_score,
-            "factors": factors}
+    return {"signal": "NO TRADE", "reason": "Inconclusive after all checks",
+            "score": abs_score, "confluence": confluence_msg, "factors": factors}
 
 
 def render_volume_profile(cache: dict, symbol: str):
@@ -2742,12 +2855,14 @@ def render_trade_signal(cache: dict, symbol: str):
                 NO TRADE</div>
             <div style="color:#aab0c0;font-size:13px;margin-top:8px">
                 {sig.get('reason','Mixed signals — wait karo')}</div>
-            <div style="color:#c0c8d8;font-size:11px;margin-top:10px">
-                Confidence: {score:.0f}% &nbsp;|&nbsp;
+            <div style="color:#c0c8d8;font-size:11px;margin-top:6px">
+                Confluence: {sig.get('confluence','—')} &nbsp;|&nbsp;
                 VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
                 PCR: {sig.get('pcr',0):.2f}
             </div>
         </div>""", unsafe_allow_html=True)
+        if sig.get("time_warning"):
+            st.warning(sig["time_warning"])
         _render_factor_checklist(sig.get("factors", {}))
 
     # ── BUY CE / BUY PE ───────────────────────────────────────────────────────
@@ -2826,11 +2941,15 @@ def render_trade_signal(cache: dict, symbol: str):
                 <span>Max Profit:
                     <b style="color:#1b7a2e">&#8377;{sig.get('max_profit',0):,.0f}</b></span>
                 <span>{sig.get('timeframe','Intraday')} &nbsp;|&nbsp;
-                    VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
-                    IV Rank: {sig.get('iv_rank',0):.0f}%</span>
+                    Confluence: {sig.get('confluence','—')} &nbsp;|&nbsp;
+                    VIX: {sig.get('vix',0):.1f}</span>
                 <span style="color:#aab0c0">{levels_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
+        if sig.get("is_expiry_day"):
+            st.error("⏰ EXPIRY DAY — Options premium decays fast. Use ATM only, small size, strict SL.")
+        if sig.get("time_warning"):
+            st.warning(sig["time_warning"])
         _render_factor_checklist(sig.get("factors", {}))
 
         # ── OI Wall Map — human readable ──────────────────────────────────────
