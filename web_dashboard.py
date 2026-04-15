@@ -1243,22 +1243,36 @@ def render_header(symbol, expiry, cache):
 
 def render_market_overview(cache):
     prices  = cache.get("prices", {})
-    entries = [
-        ("NSE:NIFTY 50",          "📊 NIFTY 50",   False),
-        ("NSE:NIFTY BANK",        "🏦 NIFTY BANK",  False),
-        ("NSE:NIFTY FIN SERVICE", "💹 FIN NIFTY",   False),
-        ("NSE:INDIA VIX",         "⚡ INDIA VIX",    True),
-    ]
-    cols = st.columns(4)
-    for col, (key, label, is_vix) in zip(cols, entries):
-        ltp = prices.get(key, 0)
-        with col:
-            if is_vix and ltp:
-                note  = "High Fear!" if ltp > 20 else ("Low Vol" if ltp < 14 else "Moderate")
-                st.metric(label, f"{ltp:,.2f}", note,
-                          delta_color="inverse" if ltp > 20 else "normal")
-            else:
-                st.metric(label, f"₹{ltp:,.2f}" if ltp else "—")
+    n50  = prices.get("NSE:NIFTY 50",          0)
+    bnk  = prices.get("NSE:NIFTY BANK",        0)
+    fin  = prices.get("NSE:NIFTY FIN SERVICE", 0)
+    vix  = prices.get("NSE:INDIA VIX",         0)
+
+    vix_clr  = "#ff1744" if vix > 20 else ("#00c853" if vix < 14 else "#ff6d00")
+    vix_note = "High Fear" if vix > 20 else ("Low Vol" if vix < 14 else "Moderate")
+
+    def _fmt(v): return f"₹{v:,.0f}" if v else "—"
+
+    st.markdown(
+        f"<div style='padding:8px 14px;background:#f8f9fd;"
+        f"border:1px solid #e0e4ef;border-radius:8px;"
+        f"display:flex;align-items:center;flex-wrap:wrap;gap:4px'>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>NIFTY 50</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(n50)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>BANK</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(bnk)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>FIN NIFTY</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(fin)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>VIX</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:{vix_clr}'>{vix:.2f}</span>"
+        f"&nbsp;<span style='background:{vix_clr}22;color:{vix_clr};padding:2px 9px;"
+        f"border-radius:10px;font-size:11px;font-weight:600'>{vix_note}</span>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
 
     # ── PCR Row — inline, compact ─────────────────────────────────────────────
     pcr_data = cache.get("pcr_data", {})
@@ -3294,10 +3308,8 @@ def live_data_section(symbol, expiry):
     # ── Recent Alerts Panel ──────────────────────────────────────────────────
     _render_alert_history()
 
-    # ── Market Overview ──────────────────────────────────────────────────────
-    st.markdown("### 🌐 Market Overview")
+    # ── Market Overview (compact strip) ──────────────────────────────────────
     render_market_overview(cache)
-    st.divider()
 
     # ── TRADE SIGNALS — NIFTY + BANKNIFTY side by side ──────────────────────
     other_sym   = cache.get("other_symbol", "BANKNIFTY" if symbol == "NIFTY" else "NIFTY")
