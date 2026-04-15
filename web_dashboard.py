@@ -1260,6 +1260,41 @@ def render_market_overview(cache):
             else:
                 st.metric(label, f"₹{ltp:,.2f}" if ltp else "—")
 
+    # ── PCR Row — inline, compact ─────────────────────────────────────────────
+    pcr_data = cache.get("pcr_data", {})
+    zone_col = {
+        "EXTREME_BULL": "#00c853", "BULLISH":  "#69f0ae",
+        "NEUTRAL":      "#ffd740", "BEARISH":  "#ff6d00",
+        "EXTREME_BEAR": "#ff1744",
+    }
+    if pcr_data:
+        parts = []
+        for sym in ["NIFTY", "BANKNIFTY"]:
+            if sym not in pcr_data:
+                continue
+            r, trend = pcr_data[sym]
+            clr   = zone_col.get(r.zone, "#888")
+            t_ico = {"▲": "▲", "▼": "▼", "→": "→"}.get(trend, "")
+            parts.append(
+                f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>{sym}</span>"
+                f"&nbsp;<span style='font-size:18px;font-weight:700;color:{clr}'>{r.pcr:.2f}</span>"
+                f"&nbsp;<span style='color:{clr};font-size:11px'>{t_ico}</span>"
+                f"&nbsp;<span style='background:{clr}22;color:{clr};padding:2px 9px;"
+                f"border-radius:10px;font-size:11px;font-weight:600'>{r.zone}</span>"
+                f"&nbsp;<span style='color:#aab0c0;font-size:11px'>Signal: {r.signal}</span>"
+            )
+        if parts:
+            divider = "<span style='color:#e0e4ef;font-size:16px;margin:0 16px'>|</span>"
+            st.markdown(
+                f"<div style='margin-top:10px;padding:8px 14px;background:#f8f9fd;"
+                f"border:1px solid #e0e4ef;border-radius:8px;display:flex;"
+                f"align-items:center;flex-wrap:wrap;gap:4px'>"
+                f"<span style='color:#8a96b0;font-size:10px;font-weight:600;"
+                f"text-transform:uppercase;letter-spacing:0.6px;margin-right:12px'>PCR</span>"
+                f"{divider.join(parts)}</div>",
+                unsafe_allow_html=True
+            )
+
 
 def render_oi_chain(cache, symbol):
     chain     = cache.get("oi_chain", [])
@@ -2912,7 +2947,8 @@ def render_trade_signal(cache: dict, symbol: str):
         </div>""", unsafe_allow_html=True)
         if sig.get("time_warning"):
             st.warning(sig["time_warning"])
-        _render_factor_checklist(sig.get("factors", {}))
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
 
     # ── BUY CE / BUY PE ───────────────────────────────────────────────────────
     elif s in ("BUY CE", "BUY PE"):
@@ -2999,58 +3035,34 @@ def render_trade_signal(cache: dict, symbol: str):
             st.error("⏰ EXPIRY DAY — Options premium decays fast. Use ATM only, small size, strict SL.")
         if sig.get("time_warning"):
             st.warning(sig["time_warning"])
-        _render_factor_checklist(sig.get("factors", {}))
-
-        # ── OI Wall Map — human readable ──────────────────────────────────────
-        walls = sig.get("oi_walls", {})
-        if walls:
-            call_walls = walls.get("call_walls", [])
-            put_walls  = walls.get("put_walls",  [])
-            is_buy_ce  = (s == "BUY CE")
-
-            st.markdown("#### 📊 Market Structure — OI Walls")
-            col_r, col_s = st.columns(2)
-
-            with col_r:
-                st.markdown("**🧱 Resistance (Call Walls)**")
-                if call_walls:
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
+            # ── OI Wall Map ────────────────────────────────────────────────────
+            walls = sig.get("oi_walls", {})
+            if walls:
+                call_walls = walls.get("call_walls", [])
+                put_walls  = walls.get("put_walls",  [])
+                is_buy_ce  = (s == "BUY CE")
+                st.markdown("**📊 OI Walls**")
+                col_r, col_s = st.columns(2)
+                with col_r:
+                    st.markdown("**🧱 Resistance**")
                     for i, (strike, oi_l) in enumerate(call_walls):
                         bar_len   = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
-                        nearest   = (i == 0 and is_buy_ce)
-                        tag       = " ← ⚠️ NEAREST" if nearest else ""
-                        color_tag = "🔴" if nearest else "🟠"
-                        st.markdown(
-                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
-                        )
-                else:
-                    st.caption("Data loading...")
-
-            with col_s:
-                st.markdown("**🛡️ Support (Put Walls)**")
-                if put_walls:
+                        tag       = " ← ⚠️" if (i == 0 and is_buy_ce) else ""
+                        st.markdown(f"`{strike}` {'🔴' if (i==0 and is_buy_ce) else '🟠'} `{bar}` **{oi_l}L**{tag}")
+                with col_s:
+                    st.markdown("**🛡️ Support**")
                     for i, (strike, oi_l) in enumerate(put_walls):
                         bar_len   = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
-                        nearest   = (i == 0 and not is_buy_ce)
-                        tag       = " ← ⚠️ NEAREST" if nearest else ""
-                        color_tag = "🔴" if nearest else "🟢"
-                        st.markdown(
-                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
-                        )
-                else:
-                    st.caption("Data loading...")
-
-            # Plain language warning
-            warn = walls.get("ce_warning" if is_buy_ce else "pe_warning", "")
-            if warn:
-                penalty = walls.get("score_penalty", 0)
-                if penalty <= -15:
-                    st.error(warn)
-                elif penalty <= -8:
-                    st.warning(warn)
-                else:
-                    st.success(warn)
+                        tag       = " ← ⚠️" if (i == 0 and not is_buy_ce) else ""
+                        st.markdown(f"`{strike}` {'🔴' if (i==0 and not is_buy_ce) else '🟢'} `{bar}` **{oi_l}L**{tag}")
+                warn = walls.get("ce_warning" if is_buy_ce else "pe_warning", "")
+                if warn:
+                    penalty = walls.get("score_penalty", 0)
+                    (st.error if penalty <= -15 else st.warning if penalty <= -8 else st.success)(warn)
 
     # ── SELL — Iron Condor ────────────────────────────────────────────────────
     else:
@@ -3156,7 +3168,8 @@ def render_trade_signal(cache: dict, symbol: str):
                 <span>{levels_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
-        _render_factor_checklist(sig.get("factors", {}))
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3313,14 +3326,9 @@ def live_data_section(symbol, expiry):
 
     st.divider()
 
-    # ── PCR | IV ─────────────────────────────────────────────────────────────
-    col_pcr, col_iv = st.columns(2)
-    with col_pcr:
-        st.markdown("### 📉 PCR Readings")
-        render_pcr(cache)
-    with col_iv:
-        st.markdown("### 🎯 IV Rank · Greeks · Skew")
-        render_iv(cache)
+    # ── IV (PCR now shown in Market Overview) ─────────────────────────────────
+    st.markdown("### 🎯 IV Rank · Greeks · Skew")
+    render_iv(cache)
 
     st.divider()
 
