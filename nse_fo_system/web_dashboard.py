@@ -32,7 +32,7 @@ st.set_page_config(
     page_title="NSE F&O Live Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -4072,12 +4072,82 @@ def advanced_signals_section(symbol: str, expiry: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR (bahar hai — refresh se affect nahi hota)
 # ══════════════════════════════════════════════════════════════════════════════
-def render_sidebar() -> str:
+def render_topbar() -> str:
     """
-    Sidebar render karo — navigation + controls + status.
+    Sidebar hata ke top navigation bar — symbol + page dropdown + status.
     Returns: selected page name
     """
-    sb = st.sidebar
+    # Hide sidebar + toggle button completely
+    st.markdown("""<style>
+    [data-testid="stSidebar"]{display:none!important}
+    [data-testid="collapsedControl"]{display:none!important}
+    </style>""", unsafe_allow_html=True)
+
+    c_brand, c_sym, c_nav, c_status = st.columns([1, 1, 2, 2.5])
+
+    with c_brand:
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:7px;padding:6px 0'>"
+            "<div style='background:#2962ff;border-radius:6px;width:26px;height:26px;"
+            "display:flex;align-items:center;justify-content:center;font-size:14px'>📈</div>"
+            "<span style='font-size:13px;font-weight:700;color:#1a1a2e'>NSE F&amp;O</span>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    with c_sym:
+        current     = st.session_state.get("symbol", "NIFTY")
+        sym_options = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+        new_sym     = st.selectbox("sym", sym_options,
+                                   index=sym_options.index(current),
+                                   label_visibility="collapsed")
+        if new_sym != current:
+            st.session_state["symbol"] = new_sym
+            st.rerun()
+
+    with c_nav:
+        pages = ["📊  Live Dashboard", "🧠  Advanced Signals",
+                 "🧭  Trend Compass",  "🔬  Backtester"]
+        page = st.selectbox("nav", pages, label_visibility="collapsed")
+
+    with c_status:
+        mkt     = get_market_status()
+        dot_col = "#26a69a" if mkt == "OPEN" else ("#ffd740" if mkt == "PRE-OPEN" else "#ef5350")
+        now_str = datetime.now().strftime("%H:%M:%S")
+        try:
+            summary  = st.session_state["trade_log"].get_daily_summary()
+            pnl      = summary.get("gross_pnl", 0)
+            pnl_col  = "#26a69a" if pnl >= 0 else "#ef5350"
+            pnl_sym  = "▲" if pnl >= 0 else "▼"
+            trades   = summary.get("total_trades", 0)
+            wr       = summary.get("win_rate", 0)
+            pnl_html = (
+                f"<span style='color:{pnl_col};font-weight:600;font-size:13px'>"
+                f"{pnl_sym} &#8377;{abs(pnl):,.0f}</span>"
+                f"&nbsp;<span style='color:#aab0c0;font-size:11px'>"
+                f"{trades}T &nbsp;WR {wr:.0f}%</span>"
+            )
+        except Exception:
+            pnl_html = "<span style='color:#aab0c0;font-size:11px'>No trades</span>"
+
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:10px;padding:6px 0'>"
+            f"{pnl_html}"
+            f"<span style='color:#e0e4ef'>|</span>"
+            f"<span style='display:flex;align-items:center;gap:5px'>"
+            f"<span style='width:7px;height:7px;border-radius:50%;background:{dot_col};"
+            f"display:inline-block'></span>"
+            f"<span style='color:#5a6a8a;font-size:12px'>{mkt}</span>"
+            f"&nbsp;<span style='color:#b0b8cc;font-size:11px'>{now_str}</span>"
+            f"</span></div>",
+            unsafe_allow_html=True
+        )
+
+    st.markdown(
+        "<hr style='margin:4px 0 12px;border:none;border-top:1px solid #e0e4ef'>",
+        unsafe_allow_html=True
+    )
+    return page
 
     # ── Branding — Sensibull style ────────────────────────────────────────────
     sb.markdown("""
@@ -4672,8 +4742,8 @@ def main():
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
 
-    # ── Sidebar navigation ────────────────────────────────────────────────────
-    page = render_sidebar()
+    # ── Top navigation bar (sidebar hata diya) ───────────────────────────────
+    page = render_topbar()
 
     # ── Page routing ──────────────────────────────────────────────────────────
     if "Live Dashboard" in page:
