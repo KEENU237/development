@@ -24,7 +24,7 @@ STT_SELL_PCT       = 0.0625  # STT on sell side (options)
 EXCHANGE_CHARGES   = 0.0003  # NSE + SEBI charges
 SLIPPAGE_RS        = 1.5     # Avg bid-ask spread slippage
 
-LOT_SIZE = {"NIFTY": 75, "BANKNIFTY": 15, "FINNIFTY": 40}
+LOT_SIZE = {"NIFTY": 75, "BANKNIFTY": 30, "FINNIFTY": 40}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

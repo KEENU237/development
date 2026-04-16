@@ -2438,12 +2438,14 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             elif oi_walls.get("nearest_call"):
                 factors["OI Wall"] = ("✅", ce_warn, "Path clear above", "#00c853")
         elif score < 0:
-            score = min(0, score - penalty)
+            # PUT wall = support below spot.
+            # Do NOT penalise bearish score — when market falls through support,
+            # the wall breaks, often accelerating the move down.
             pe_warn = oi_walls.get("pe_warning", "")
             if penalty < -10:
-                factors["OI Wall"] = ("🛡️", pe_warn, "Strong support below — bearish move may stall", "#ff6d00")
+                factors["OI Wall"] = ("🛡️", pe_warn, "Large PUT wall — watch: if it breaks, fall accelerates", "#ffd740")
             elif penalty < 0:
-                factors["OI Wall"] = ("⚠️", pe_warn, "Support present — reduce size", "#ffd740")
+                factors["OI Wall"] = ("⚠️", pe_warn, "PUT support nearby — monitor for breakdown", "#888")
             elif oi_walls.get("nearest_put"):
                 factors["OI Wall"] = ("✅", pe_warn, "Path clear below", "#00c853")
 
@@ -2500,48 +2502,6 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "vix":           vix,
             "pcr":           pcr_value,
             "build":         atm_build,
-            "time_warning":  time_warning,
-            "is_expiry_day": is_expiry_day,
-        }
-
-    # ── SELL — Iron Condor / Strangle ────────────────────────────────────────
-    if sell_mode and iv_rank > 50:
-        sell_ce = int(top_ce_oi)
-        sell_pe = int(top_pe_oi)
-
-        # Gamma wall adjust — sell above/below wall
-        if gamma_wall and gamma_wall > sell_ce:
-            sell_ce = int(gamma_wall) + step
-
-        ce_prem = pe_prem = 0
-        for row in oi_chain:
-            if int(row.strike) == sell_ce: ce_prem = row.ce_ltp
-            if int(row.strike) == sell_pe: pe_prem = row.pe_ltp
-
-        total_prem   = ce_prem + pe_prem
-        max_profit_r = round(total_prem * lot)
-        sl_premium   = round(total_prem * 1.5)   # 1.5x collected = exit
-
-        return {
-            "signal":        "SELL — Iron Condor",
-            "sell_ce":       sell_ce,
-            "sell_pe":       sell_pe,
-            "ce_prem":       ce_prem,
-            "pe_prem":       pe_prem,
-            "total_prem":    round(total_prem, 1),
-            "max_profit_r":  max_profit_r,
-            "sl_premium":    sl_premium,
-            "sl_rule":       f"Exit if either side crosses ₹{sl_premium:.0f}",
-            "score":         min(abs_score + 20, 100),
-            "confluence":    confluence_msg,
-            "factors":       factors,
-            "vix":           vix,
-            "pcr":           pcr_value,
-            "iv_rank":       iv_rank,
-            "timeframe":     "Weekly / Swing",
-            "gamma_wall":    gamma_wall,
-            "flip_level":    flip_level,
-            "strike_reason": f"CE Resistance: {sell_ce} | PE Support: {sell_pe}",
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
         }
@@ -2659,6 +2619,49 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
             "oi_walls":      oi_walls,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+        }
+
+    # ── SELL — Iron Condor / Strangle (fallback when no directional signal) ─────
+    # Only fires if no clear BUY CE / BUY PE signal above, and conditions favour selling.
+    if sell_mode and iv_rank > 50:
+        sell_ce = int(top_ce_oi)
+        sell_pe = int(top_pe_oi)
+
+        # Gamma wall adjust — sell above/below wall
+        if gamma_wall and gamma_wall > sell_ce:
+            sell_ce = int(gamma_wall) + step
+
+        ce_prem = pe_prem = 0
+        for row in oi_chain:
+            if int(row.strike) == sell_ce: ce_prem = row.ce_ltp
+            if int(row.strike) == sell_pe: pe_prem = row.pe_ltp
+
+        total_prem   = ce_prem + pe_prem
+        max_profit_r = round(total_prem * lot)
+        sl_premium   = round(total_prem * 1.5)   # 1.5x collected = exit
+
+        return {
+            "signal":        "SELL — Iron Condor",
+            "sell_ce":       sell_ce,
+            "sell_pe":       sell_pe,
+            "ce_prem":       ce_prem,
+            "pe_prem":       pe_prem,
+            "total_prem":    round(total_prem, 1),
+            "max_profit_r":  max_profit_r,
+            "sl_premium":    sl_premium,
+            "sl_rule":       f"Exit if either side crosses ₹{sl_premium:.0f}",
+            "score":         min(abs_score + 20, 100),
+            "confluence":    confluence_msg,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "iv_rank":       iv_rank,
+            "timeframe":     "Weekly / Swing",
+            "gamma_wall":    gamma_wall,
+            "flip_level":    flip_level,
+            "strike_reason": f"CE Resistance: {sell_ce} | PE Support: {sell_pe}",
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
         }
