@@ -2339,8 +2339,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         elif vix < 20:
             factors["VIX"] = ("⚪", f"{vix:.1f}", "Moderate — Neutral", "#ffd740")
         elif vix < 25:
-            score -= 10; sell_mode = True
-            factors["VIX"] = ("⚠️", f"{vix:.1f}", "High fear — Prefer selling premium", "#ffd740")
+            # BUG FIX: was missing bear_count increment — VIX 20-25 IS bearish
+            score -= 10; sell_mode = True; bear_count += 1
+            factors["VIX"] = ("❌", f"{vix:.1f}", "High fear — Bearish / Sell premium", "#ff6d00")
         else:
             score -= 10; sell_mode = True; bear_count += 1
             factors["VIX"] = ("❌", f"{vix:.1f}", "Extreme fear — DO NOT buy options", "#ff1744")
@@ -2448,26 +2449,48 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
 
     abs_score = abs(score)
 
-    # ── Confluence Gate — min 3 factors must agree ────────────────────────────
+    # ── Adaptive thresholds — based on how much real data is available ────────
+    # When PCR/OI/MaxPain/IV APIs fail, fewer factors contribute.
+    # Requiring 3/8 confluence from 2-3 working factors is impossible → no signal ever.
+    # Solution: count real data sources, lower gate proportionally.
+    _data_count = sum([
+        bool(pcr_data.get(symbol)),  # PCR real
+        bool(oi_chain),              # OI chain loaded
+        bool(mp_result),             # Max Pain available
+        bool(gex_data),              # GEX calculated
+        bool(iv_data),               # IV calculated (not default)
+        vix > 0,                     # VIX available
+        bool(vp_data.get("poc")),    # Volume Profile loaded
+    ])
+    if _data_count >= 5:
+        _need_score, _need_confluence = 35, 3   # Full data — strict gate
+    elif _data_count >= 3:
+        _need_score, _need_confluence = 28, 2   # Partial data — relaxed gate
+    else:
+        _need_score, _need_confluence = 22, 2   # Poor data — very relaxed
+
+    # ── Confluence Gate ───────────────────────────────────────────────────────
     if score > 0:
-        confluence_ok = bull_count >= 3
-        confluence_msg = f"{bull_count}/8 bullish factors"
+        confluence_ok = bull_count >= _need_confluence
+        confluence_msg = f"{bull_count}/{_data_count} bullish factors"
     elif score < 0:
-        confluence_ok = bear_count >= 3
-        confluence_msg = f"{bear_count}/8 bearish factors"
+        confluence_ok = bear_count >= _need_confluence
+        confluence_msg = f"{bear_count}/{_data_count} bearish factors"
     else:
         confluence_ok = False
-        confluence_msg = "0/8"
+        confluence_msg = f"0/{_data_count}"
 
     # ── Expiry Day — no buying ─────────────────────────────────────────────────
-    if is_expiry_day and abs_score >= 35 and not sell_mode:
-        sell_mode = True   # force to sell or no trade on expiry
+    if is_expiry_day and abs_score >= _need_score and not sell_mode:
+        sell_mode = True
         factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
                                 "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
 
     # ── NO TRADE — insufficient score or confluence ───────────────────────────
-    if abs_score < 35 or not confluence_ok:
-        reason = "Signals mixed" if abs_score < 35 else f"Only {confluence_msg} — need 3+ to confirm"
+    if abs_score < _need_score or not confluence_ok:
+        reason = (f"Score {abs_score} < {_need_score}"
+                  if abs_score < _need_score
+                  else f"Only {confluence_msg} — need {_need_confluence}+ to confirm")
         return {
             "signal":        "NO TRADE",
             "reason":        reason,
@@ -2563,7 +2586,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         gain_mult, sl_mult = 1.35, 0.65   # 35% target, 35% SL (wide for high VIX)
 
     # ── BUY CE ────────────────────────────────────────────────────────────────
-    if score >= 35:
+    if score >= _need_score:
         strike, entry, strike_reason = _pick_strike_and_ltp("CE")
         entry     = max(entry, 5)
         target    = round(entry * gain_mult)
@@ -2602,7 +2625,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         }
 
     # ── BUY PE ────────────────────────────────────────────────────────────────
-    if score <= -35:
+    if score <= -_need_score:
         strike, entry, strike_reason = _pick_strike_and_ltp("PE")
         entry     = max(entry, 5)
         target    = round(entry * gain_mult)
