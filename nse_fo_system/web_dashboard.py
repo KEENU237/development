@@ -2534,6 +2534,41 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         if ltp <= 0:
             ltp = round(spot * 0.003)
 
+        # ── Greeks (Delta) filter — block deep OTM entries ──────────────────────
+        # delta < 0.15 = strike too far OTM: theta eats premium faster than the
+        # market move can offset. Never blocks the signal — just moves to ATM.
+        if chosen != atm:
+            try:
+                tte   = max(tte_years(expiry_str), 0.001)
+                sigma = max(iv_data.get("atm_iv", 0.0), vix, 8.0) / 100.0
+                g     = calc_greeks(spot, chosen, tte, sigma, direction)
+                if g is not None and abs(g.delta) < 0.15:
+                    chosen = atm
+                    reason = f"ATM fallback — delta {abs(g.delta):.2f} too low (deep OTM, theta risk)"
+                    ltp = 0
+                    for row in oi_chain:
+                        if int(row.strike) == atm:
+                            ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
+                            break
+                    if ltp <= 0:
+                        ltp = round(spot * 0.003)
+            except Exception:
+                pass  # never block signal due to greeks error
+
+        # ── Minimum premium guard ────────────────────────────────────────────────
+        # Very cheap OTM premiums → wide bid-ask spread + theta decay too aggressive.
+        min_prem = 20 if symbol == "NIFTY" else 35
+        if ltp < min_prem and chosen != atm:
+            chosen = atm
+            reason = f"ATM fallback — OTM premium ₹{ltp:.0f} too thin (min ₹{min_prem})"
+            ltp = 0
+            for row in oi_chain:
+                if int(row.strike) == atm:
+                    ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
+                    break
+            if ltp <= 0:
+                ltp = round(spot * 0.003)
+
         return int(chosen), ltp, reason
 
     # ── Dynamic Target/SL based on VIX ───────────────────────────────────────
