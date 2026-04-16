@@ -250,6 +250,32 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     other_symbol = {"NIFTY": "BANKNIFTY", "BANKNIFTY": "NIFTY",
                     "FINNIFTY": "NIFTY"}.get(symbol, "BANKNIFTY")
 
+    # ── Pre-warm instruments cache + compute expiries BEFORE threads ──────────
+    # Reason: kite.instruments("NFO") is a large download (~2MB).
+    # If multiple threads call it simultaneously → Zerodha rate-limits/timeouts
+    # → ALL NFO data (PCR, OI, MaxPain) returns empty → no signals ever.
+    # Solution: download ONCE here (cached 30 min), then all threads use cache.
+    _sym_expiries = {}
+    try:
+        _instr = kite._get_instruments_cached()   # warms 30-min cache
+        from datetime import date as _date
+        _today = _date.today()
+        for _s in [symbol, other_symbol, "NIFTY", "BANKNIFTY"]:
+            _exps = sorted(set(
+                i["expiry"] for i in _instr
+                if i["name"] == _s
+                and i["instrument_type"] in ("CE", "PE")
+                and i["expiry"] >= _today
+            ))
+            if _exps:
+                _sym_expiries[_s] = _exps[0].isoformat()
+    except Exception as _e:
+        logger.warning(f"Expiry pre-compute failed: {_e}")
+
+    _nifty_exp  = _sym_expiries.get("NIFTY",     expiry)
+    _bnk_exp    = _sym_expiries.get("BANKNIFTY", expiry)
+    _other_exp  = _sym_expiries.get(other_symbol, expiry)
+
     # ── Worker functions (parallel chalenge) ─────────────────────────────────
     def _fetch_prices():
         try:
@@ -277,7 +303,8 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
 
     def _fetch_pcr(sym):
         try:
-            sym_exp = get_nearest_expiry(sym, kite=kite.kite).isoformat()
+            # Use pre-computed expiry — avoids kite.instruments() inside thread
+            sym_exp = _nifty_exp if sym == "NIFTY" else _bnk_exp
             return sym, pcr_obj.get_pcr(sym, sym_exp)
         except Exception as exc:
             logger.error(f"PCR {sym}: {exc}")
@@ -315,18 +342,16 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     def _fetch_other_oi_chain():
         """Other symbol ki OI chain — dual signal panel ke liye."""
         try:
-            other_exp = get_nearest_expiry(other_symbol, kite=kite.kite).isoformat()
-            chain     = pcr_obj.get_oi_chain(other_symbol, other_exp, 10)
-            return other_exp, chain
+            chain = pcr_obj.get_oi_chain(other_symbol, _other_exp, 10)
+            return _other_exp, chain
         except Exception as exc:
             logger.error(f"Other OI Chain ({other_symbol}): {exc}")
-            return expiry, []
+            return _other_exp, []
 
     def _fetch_other_max_pain():
         """Other symbol ka max pain — dual signal panel ke liye."""
         try:
-            other_exp = get_nearest_expiry(other_symbol, kite=kite.kite).isoformat()
-            return mp_obj.compute(other_symbol, other_exp)
+            return mp_obj.compute(other_symbol, _other_exp)
         except Exception as exc:
             logger.error(f"Other MaxPain ({other_symbol}): {exc}")
             return None
