@@ -2227,6 +2227,22 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     elif closing_risk:
         time_warning = "⚠️ Market closing soon — avoid fresh entries."
 
+    # ── Opening hard block (9:15–9:30) ───────────────────────────────────────
+    # First 15 minutes: gap opens, spike reversals, fake breakouts — all 8 factors
+    # read noise, not signal. Hard block prevents any entry in this window.
+    if dtime(9, 15) <= now_time < dtime(9, 30) and get_market_status() == "OPEN":
+        return {
+            "signal":       "NO TRADE",
+            "reason":       "9:15–9:30 Opening Spike — wait for price to settle (9:30+)",
+            "score":        0,
+            "factors":      {},
+            "vix":          prices.get("NSE:INDIA VIX", 0),
+            "pcr":          0,
+            "build":        "⚪",
+            "time_warning": "🚫 Hard block: 9:15–9:30 opening window. Re-enter at 9:30.",
+            "is_expiry_day": False,
+        }
+
     # ── Expiry day check ──────────────────────────────────────────────────────
     today         = date.today()
     expiry_str    = cache.get("expiry", "")
@@ -2290,10 +2306,16 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             pe_chg = row.pe_oi_chg or 0
 
             if ce_chg > oi_threshold:
-                # CE OI up — Fresh CE buying = Bullish
-                atm_build = "FL"; score += 20; bull_count += 1
-                factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | LTP {atm_ce_ltp:.0f}",
-                                       "Fresh Long — Bulls entering", "#00c853")
+                # CE OI up — check LTP exists before claiming bullish
+                # (CE OI can rise from fresh buying OR from call writing — both look same)
+                if atm_ce_ltp > 0:
+                    atm_build = "FL"; score += 15; bull_count += 1
+                    factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | LTP {atm_ce_ltp:.0f}",
+                                           "CE OI Build — Bullish bias (verify with price action)", "#69f0ae")
+                else:
+                    # No LTP data → can't confirm direction; neutral
+                    factors["OI Build"] = ("⚪", f"CE OI +{ce_chg:,}",
+                                           "CE OI up but no LTP — inconclusive", "#888")
 
             elif pe_chg > oi_threshold:
                 # PE OI up — need LTP to verify direction
@@ -2328,7 +2350,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         factors["OI Build"] = ("⚪", "No data", "OI chain not loaded", "#555")
 
     # ── 4. VIX (±10) ─────────────────────────────────────────────────────────
-    sell_mode = False
+    sell_mode        = False
+    range_bound_block = False   # GEX range-bound → block ALL directional entries
+    block_buying     = False    # VIX 25+ → block option buying (IV crush risk)
     if vix > 0:
         if vix < 13:
             score += 10; bull_count += 1
@@ -2343,15 +2367,19 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             score -= 10; sell_mode = True; bear_count += 1
             factors["VIX"] = ("❌", f"{vix:.1f}", "High fear — Bearish / Sell premium", "#ff6d00")
         else:
-            score -= 10; sell_mode = True; bear_count += 1
-            factors["VIX"] = ("❌", f"{vix:.1f}", "Extreme fear — DO NOT buy options", "#ff1744")
+            # VIX 25+ = extreme fear: IV is so elevated that option buying leads to
+            # IV crush even if direction is correct. Hard block on buying.
+            score -= 10; sell_mode = True; bear_count += 1; block_buying = True
+            factors["VIX"] = ("🚫", f"{vix:.1f}",
+                              f"Extreme fear (VIX 25+) — IV crush risk. BUY blocked. Only sell premium.",
+                              "#ff1744")
     else:
         factors["VIX"] = ("⚪", "N/A", "No data", "#555")
 
     # ── 5. IV Rank (±10) ─────────────────────────────────────────────────────
     iv_rank = iv_data.get("iv_rank", 50)
     if iv_rank > 70:
-        sell_mode = True; score -= 5
+        sell_mode = True; score -= 5; bear_count += 1   # fix: was missing bear_count
         factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Very expensive — Strong sell signal", "#ff6d00")
     elif iv_rank > 55:
         sell_mode = True
@@ -2368,18 +2396,22 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     # ── 6. GEX Regime (±10) ──────────────────────────────────────────────────
     gex_regime = gex_data.get("regime",    "NEUTRAL")
     gex_total  = gex_data.get("total_gex", 0)
-    gamma_wall = gex_data.get("gamma_wall", atm)
+    gamma_wall = gex_data.get("gamma_wall") or None   # fix: don't default to ATM (misleading label)
     flip_level = gex_data.get("flip_level", None)
 
     if gex_regime == "RANGE BOUND":
-        score -= 10; sell_mode = True
-        factors["GEX"] = ("⚠️", f"{gex_total:+.1f}Cr", "Range bound — MM will suppress moves", "#ffd740")
+        # MMs are actively gamma-hedging to suppress big moves — directional entries fail here.
+        score -= 10; sell_mode = True; range_bound_block = True
+        factors["GEX"] = ("📦", f"{gex_total:+.1f}Cr",
+                          "RANGE BOUND — MM suppressing moves. BUY CE/PE blocked.", "#ff6d00")
     elif gex_regime == "VOLATILE / TRENDING":
-        # Amplify existing direction
-        bonus = +10 if score > 0 else -10
-        score += bonus
-        if bonus > 0: bull_count += 1
-        else: bear_count += 1
+        # Only amplify if a meaningful direction is already established (abs_score ≥ 15)
+        # Prevents noise (<15 score) from getting amplified into a false signal
+        if abs(score) >= 15:
+            bonus = +10 if score > 0 else -10
+            score += bonus
+            if bonus > 0: bull_count += 1
+            else: bear_count += 1
         factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — Directional move likely", "#00c853")
     else:
         factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Neutral GEX — No strong push", "#888")
@@ -2506,6 +2538,24 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "is_expiry_day": is_expiry_day,
         }
 
+    # ── NO TRADE — blocked by risk guards even though score is strong ─────────
+    if range_bound_block or block_buying:
+        _block_reason = ("GEX: Market is RANGE BOUND — MMs suppressing directional moves"
+                         if range_bound_block
+                         else f"VIX {vix:.1f} ≥ 25 — Extreme IV, buying options risks IV crush")
+        return {
+            "signal":        "NO TRADE",
+            "reason":        _block_reason,
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+        }
+
     # ── Smart Strike Selection for BUY ────────────────────────────────────────
     def _pick_strike_and_ltp(direction: str):
         chosen = atm
@@ -2581,7 +2631,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         gain_mult, sl_mult = 1.35, 0.65   # 35% target, 35% SL (wide for high VIX)
 
     # ── BUY CE ────────────────────────────────────────────────────────────────
-    if score >= _need_score:
+    # Guards: range_bound_block (MMs suppressing moves) and block_buying (VIX 25+, IV crush)
+    if score >= _need_score and not range_bound_block and not block_buying:
         strike, entry, strike_reason = _pick_strike_and_ltp("CE")
         entry     = max(entry, 5)
         target    = round(entry * gain_mult)
@@ -2620,7 +2671,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         }
 
     # ── BUY PE ────────────────────────────────────────────────────────────────
-    if score <= -_need_score:
+    # Guards: range_bound_block (MMs suppressing moves) and block_buying (VIX 25+, IV crush)
+    if score <= -_need_score and not range_bound_block and not block_buying:
         strike, entry, strike_reason = _pick_strike_and_ltp("PE")
         entry     = max(entry, 5)
         target    = round(entry * gain_mult)

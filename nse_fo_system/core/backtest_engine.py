@@ -219,7 +219,8 @@ class BacktestEngine:
 
                 if ltp > 0:
                     # Same-day expiry check — don't carry overnight
-                    if date != open_trade.date and t >= "09:20":
+                    # Close at first snapshot of new day (>= 09:15, not 09:20)
+                    if date != open_trade.date and t >= "09:15":
                         trade = self._close(
                             open_trade, ltp, "END_OF_DAY", config)
                         trades.append(trade)
@@ -267,7 +268,7 @@ class BacktestEngine:
                 continue
             if signal == "BUY CE" and pcr < config.min_pcr_bull:
                 continue
-            if signal == "BUY PE" and pcr > config.max_pcr_bear:
+            if signal == "BUY PE" and pcr >= config.max_pcr_bear:   # fix: >= not >
                 continue
 
             # Entry price from snapshot + slippage
@@ -275,9 +276,17 @@ class BacktestEngine:
             if raw_entry <= 0:
                 continue
 
-            entry  = round(raw_entry + config.slippage_rs, 2)
-            target = round(entry * 1.42, 2)
-            sl     = round(entry * 0.72, 2)
+            entry = round(raw_entry + config.slippage_rs, 2)
+
+            # Dynamic target/SL — mirrors live signal ratios (VIX-based)
+            if vix < 15:
+                gain_mult, sl_mult = 1.50, 0.70   # Low VIX: wider target, tighter SL
+            elif vix < 20:
+                gain_mult, sl_mult = 1.42, 0.72   # Normal VIX
+            else:
+                gain_mult, sl_mult = 1.35, 0.65   # High VIX: tighter target, wider SL
+            target = round(entry * gain_mult, 2)
+            sl     = round(entry * sl_mult,   2)
 
             open_trade = BacktestTrade(
                 snap_id     = snap.get("id", i),
