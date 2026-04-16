@@ -2170,6 +2170,18 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     if not spot:
         return {"signal": "NO TRADE", "reason": "Market data unavailable", "score": 0}
 
+    # ── Market closed / no data check ────────────────────────────────────────
+    mkt_status  = get_market_status()
+    data_missing = (not oi_chain and not pcr_data and not mp_result)
+    if mkt_status != "OPEN" and data_missing:
+        return {
+            "signal":  "MARKET CLOSED",
+            "reason":  f"Market is {mkt_status} — live OI/PCR data not available.",
+            "score":   0,
+            "vix":     vix,
+            "status":  mkt_status,
+        }
+
     score     = 0
     step      = 50 if symbol == "NIFTY" else 100
     atm       = round(spot / step) * step
@@ -2940,8 +2952,31 @@ def render_trade_signal(cache: dict, symbol: str):
         "BUY PE":             ("#c0392b", "🔴", "#fff5f5"),
         "SELL — Iron Condor": ("#1a56db", "💰", "#f0f4ff"),
         "NO TRADE":           ("#8a96b0", "⛔", "#f8f9fd"),
+        "MARKET CLOSED":      ("#5a6a8a", "🌙", "#f0f3fa"),
     }
     color, icon, bg = cfg.get(s, cfg["NO TRADE"])
+
+    # ── MARKET CLOSED ─────────────────────────────────────────────────────────
+    if s == "MARKET CLOSED":
+        mkt_status = sig.get("status", "CLOSED")
+        next_open  = "Kal 9:15 AM" if mkt_status == "CLOSED" else "Thodi der mein"
+        st.markdown(f"""
+        <div style="background:{bg};border:1px solid #dde2ef;border-radius:12px;
+                    padding:20px;text-align:center;margin-bottom:8px">
+            <div style="font-size:28px">{icon}</div>
+            <div style="font-size:16px;font-weight:700;color:#5a6a8a;margin-top:6px">
+                {symbol} — Market {mkt_status}</div>
+            <div style="color:#aab0c0;font-size:12px;margin-top:6px">
+                OI / PCR / Max Pain data tab ayega jab market khule</div>
+            <div style="margin-top:10px;padding:8px 16px;display:inline-block;
+                        background:#e8ecf8;border-radius:20px;">
+                <span style="color:#5a6a8a;font-size:12px">
+                    Next open: <b>{next_open}</b>
+                    &nbsp;|&nbsp; VIX: <b style="color:#ff6d00">{sig.get('vix',0):.1f}</b>
+                </span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        return
 
     # ── NO TRADE ──────────────────────────────────────────────────────────────
     if s == "NO TRADE":
