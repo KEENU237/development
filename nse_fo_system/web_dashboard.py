@@ -2374,9 +2374,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                     factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f}",
                                            "PE OI building — likely bearish (CE LTP unavailable)", "#ff6d00")
                 else:
-                    atm_build = "FS"; score -= 10; bear_count += 1
-                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,}",
-                                           "PE OI building — Bearish", "#ff6d00")
+                    # No LTP data — can't determine direction (same as CE case)
+                    factors["OI Build"] = ("⚪", f"PE OI +{pe_chg:,}",
+                                           "PE OI up but no LTP data — inconclusive", "#888")
 
             elif ce_chg < -oi_threshold:
                 atm_build = "LU"; score -= 10; bear_count += 1
@@ -2570,8 +2570,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         confluence_msg = f"0/{_total_factors}"
 
     # ── Expiry Day — no buying ─────────────────────────────────────────────────
-    if is_expiry_day and not sell_mode:
-        sell_mode = True
+    if is_expiry_day:
+        sell_mode   = True
+        block_buying = True   # expiry = theta crush — block directional buying regardless of iv_rank
         factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
                                 "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
 
