@@ -3466,15 +3466,6 @@ def live_data_section(symbol, expiry):
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
-    # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
-    try:
-        collector = st.session_state.get("snap_collector")
-        if collector is not None:
-            sig_result = generate_trade_signal(cache, symbol)
-            collector.collect(cache, symbol, sig_result)
-    except Exception as _sc:
-        logger.error(f"Snapshot collect error: {_sc}")
-
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)
 
@@ -4320,118 +4311,6 @@ def render_topbar() -> str:
         "<hr style='margin:4px 0 12px;border:none;border-top:1px solid #e0e4ef'>",
         unsafe_allow_html=True
     )
-    return page
-
-    # ── Branding — Sensibull style ────────────────────────────────────────────
-    sb.markdown("""
-    <div style="padding:18px 12px 14px;">
-        <div style="display:flex;align-items:center;gap:10px">
-            <div style="background:#2962ff;border-radius:8px;width:32px;height:32px;
-                        display:flex;align-items:center;justify-content:center;
-                        font-size:18px;flex-shrink:0">📈</div>
-            <div>
-                <div style="font-size:14px;font-weight:700;color:#d1d4dc;
-                            letter-spacing:0.3px">NSE F&amp;O</div>
-                <div style="font-size:10px;color:#4a4f5e;margin-top:1px">
-                    Professional v2.2</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    sb.divider()
-
-    # ── Symbol selector ───────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
-                "letter-spacing:1px;margin-bottom:4px'>Symbol</div>",
-                unsafe_allow_html=True)
-    current = st.session_state.get("symbol", "NIFTY")
-    sym_options = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
-    new_sym = sb.selectbox(
-        "symbol_sel", sym_options,
-        index=sym_options.index(current),
-        label_visibility="collapsed"
-    )
-    if new_sym != current:
-        st.session_state["symbol"] = new_sym
-        st.rerun()
-
-    sb.divider()
-
-    # ── Navigation ────────────────────────────────────────────────────────────
-    # ── Navigation label ──────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
-                "letter-spacing:1px;padding:0 4px;margin-bottom:4px'>Menu</div>",
-                unsafe_allow_html=True)
-
-    pages = [
-        "📊  Live Dashboard",
-        "🧠  Advanced Signals",
-        "🧭  Trend Compass",
-        "🔬  Backtester",
-    ]
-    page = sb.radio("nav", pages, label_visibility="collapsed")
-
-    sb.divider()
-
-    # ── Today's P&L ───────────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
-                "letter-spacing:1px;padding:0 4px;margin-bottom:6px'>Today</div>",
-                unsafe_allow_html=True)
-    try:
-        summary = st.session_state["trade_log"].get_daily_summary()
-        pnl     = summary.get("gross_pnl", 0)
-        pnl_col = "#26a69a" if pnl >= 0 else "#ef5350"
-        pnl_sym = "▲" if pnl >= 0 else "▼"
-        trades  = summary.get("total_trades", 0)
-        wr      = summary.get("win_rate", 0)
-        wins    = summary.get("win_trades", 0)
-        losses  = summary.get("loss_trades", 0)
-        sb.markdown(f"""
-        <div style="background:#eef2fb;border:1px solid #d0d8ee;border-radius:6px;
-                    padding:10px 12px;margin:0 0 4px">
-            <div style="font-size:11px;color:#8a96b0;margin-bottom:4px">P&amp;L</div>
-            <div style="font-size:20px;font-weight:600;color:{pnl_col}">
-                {pnl_sym} &#8377;{abs(pnl):,.0f}
-            </div>
-            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#8a96b0">
-                <span>Trades <b style="color:#3a4a6b">{trades}</b></span>
-                <span>W/L <b style="color:#00897b">{wins}</b>/<b style="color:#e53935">{losses}</b></span>
-                <span>WR <b style="color:{pnl_col}">{wr:.0f}%</b></span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    except Exception:
-        sb.markdown(
-            "<div style='color:#4a4f5e;font-size:11px;padding:8px 4px'>No trades today</div>",
-            unsafe_allow_html=True
-        )
-
-    sb.divider()
-
-    # ── Market status ─────────────────────────────────────────────────────────
-    mkt        = get_market_status()
-    mkt_open   = (mkt == "OPEN")
-    dot_col    = "#26a69a" if mkt_open else ("#ffd740" if mkt == "PRE-OPEN" else "#ef5350")
-    now_str    = datetime.now().strftime("%H:%M:%S")
-
-    sb.markdown(f"""
-    <div style="padding:4px;display:flex;justify-content:space-between;align-items:center">
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-            <span style="width:6px;height:6px;border-radius:50%;
-                         background:{dot_col};display:inline-block"></span>
-            <span style="color:#5a6a8a">{mkt}</span>
-        </div>
-        <span style="font-size:11px;color:#b0b8cc">{now_str}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    sb.markdown(
-        "<div style='color:#c0c8d8;font-size:10px;text-align:center;"
-        "padding:6px 0 2px'>Live Data · Auto-refresh 60s</div>",
-        unsafe_allow_html=True
-    )
-
     return page
 
 
