@@ -356,6 +356,17 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
             logger.error(f"Other MaxPain ({other_symbol}): {exc}")
             return None
 
+    def _fetch_other_vp():
+        """Other symbol ki Volume Profile — dual panel VP ke liye."""
+        try:
+            candles = kite.get_vp_candles(other_symbol, vp_session)
+            result  = _calc_volume_profile(other_symbol, candles)
+            result["session"] = vp_session
+            return result
+        except Exception as exc:
+            logger.error(f"Other VP fetch ({other_symbol}): {exc}")
+            return {}
+
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
@@ -370,6 +381,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
         f_vp          = ex.submit(_fetch_vp)
         f_other_oi    = ex.submit(_fetch_other_oi_chain)
         f_other_mp    = ex.submit(_fetch_other_max_pain)
+        f_other_vp    = ex.submit(_fetch_other_vp)
 
     # ── Collect results (timeout se kabhi hang nahi hoga) ────────────────────
     def _safe(fut, default, timeout=TIMEOUT):
@@ -429,7 +441,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
         "mp_result": cache["other_mp_result"],
         "pcr_data":  cache["pcr_data"],
         "iv_data":   {},   # no extra API calls; GEX will use VIX fallback
-        "vp_data":   {},
+        "vp_data":   _safe(f_other_vp, {}),
         "expiry":    cache["other_expiry"],
     }
     try:
@@ -2362,9 +2374,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                     factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f}",
                                            "PE OI building — likely bearish (CE LTP unavailable)", "#ff6d00")
                 else:
-                    atm_build = "FS"; score -= 10; bear_count += 1
-                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,}",
-                                           "PE OI building — Bearish", "#ff6d00")
+                    # No LTP data — can't determine direction (same as CE case)
+                    factors["OI Build"] = ("⚪", f"PE OI +{pe_chg:,}",
+                                           "PE OI up but no LTP data — inconclusive", "#888")
 
             elif ce_chg < -oi_threshold:
                 atm_build = "LU"; score -= 10; bear_count += 1
@@ -2558,8 +2570,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         confluence_msg = f"0/{_total_factors}"
 
     # ── Expiry Day — no buying ─────────────────────────────────────────────────
-    if is_expiry_day and not sell_mode:
-        sell_mode = True
+    if is_expiry_day:
+        sell_mode   = True
+        block_buying = True   # expiry = theta crush — block directional buying regardless of iv_rank
         factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
                                 "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
 

@@ -227,6 +227,22 @@ class BacktestEngine:
                         open_trade = None
                         # Fall through to check new signal
 
+                    # Iron Condor = SELL strategy: profit when premium DECAYS
+                    # Target: premium falls to 50% (decay)  SL: premium rises to 150% (expansion)
+                    elif open_trade.direction == "SELL — Iron Condor":
+                        if ltp <= open_trade.target:
+                            trades.append(self._close(open_trade, ltp, "TARGET", config))
+                            open_trade = None; continue
+                        elif ltp >= open_trade.sl:
+                            trades.append(self._close(open_trade, ltp, "SL", config))
+                            open_trade = None; continue
+                        elif t >= config.force_exit_time:
+                            trades.append(self._close(open_trade, ltp, "TIME_EXIT", config))
+                            open_trade = None; continue
+                        else:
+                            continue
+
+                    # BUY CE / BUY PE = directional: profit when premium RISES
                     elif ltp >= open_trade.target:
                         trades.append(
                             self._close(open_trade, ltp, "TARGET", config))
@@ -277,17 +293,25 @@ class BacktestEngine:
             if raw_entry <= 0:
                 continue
 
-            entry = round(raw_entry + config.slippage_rs, 2)
-
-            # Dynamic target/SL — mirrors live signal ratios (VIX-based)
-            if vix < 15:
-                gain_mult, sl_mult = 1.50, 0.70   # Low VIX: wider target, tighter SL
-            elif vix < 20:
-                gain_mult, sl_mult = 1.42, 0.72   # Normal VIX
+            if signal == "SELL — Iron Condor":
+                # Iron Condor: we RECEIVE the premium — slippage reduces what we get
+                entry = round(max(raw_entry - config.slippage_rs, 0.5), 2)
+                # Target = premium decays 50% (buy back at half price)
+                # SL     = premium expands 50% (buy back at 1.5x price)
+                target = round(entry * 0.50, 2)
+                sl     = round(entry * 1.50, 2)
             else:
-                gain_mult, sl_mult = 1.35, 0.65   # High VIX: tighter target, wider SL
-            target = round(entry * gain_mult, 2)
-            sl     = round(entry * sl_mult,   2)
+                # BUY CE / BUY PE: we PAY the premium — slippage increases cost
+                entry = round(raw_entry + config.slippage_rs, 2)
+                # Dynamic target/SL — mirrors live signal ratios (VIX-based)
+                if vix < 15:
+                    gain_mult, sl_mult = 1.50, 0.70
+                elif vix < 20:
+                    gain_mult, sl_mult = 1.42, 0.72
+                else:
+                    gain_mult, sl_mult = 1.35, 0.65
+                target = round(entry * gain_mult, 2)
+                sl     = round(entry * sl_mult,   2)
 
             open_trade = BacktestTrade(
                 snap_id     = snap.get("id", i),
@@ -321,23 +345,42 @@ class BacktestEngine:
     def _get_ltp(self, snap: dict, direction: str) -> float:
         if direction == "BUY CE":
             return float(snap.get("atm_ce_ltp") or 0)
-        return float(snap.get("atm_pe_ltp") or 0)
+        if direction == "BUY PE":
+            return float(snap.get("atm_pe_ltp") or 0)
+        if direction == "SELL — Iron Condor":
+            # Total premium received = CE + PE sides combined
+            ce = float(snap.get("atm_ce_ltp") or 0)
+            pe = float(snap.get("atm_pe_ltp") or 0)
+            return round(ce + pe, 2) if ce > 0 and pe > 0 else 0.0
+        return 0.0
 
     def _close(self, trade: BacktestTrade, ltp: float,
                reason: str, config: BacktestConfig) -> BacktestTrade:
         """Close trade — apply exit slippage + realistic costs."""
         lot = LOT_SIZE.get(config.symbol, 75)
+        ic  = trade.direction == "SELL — Iron Condor"
 
-        # Slippage against us on exit
-        exit_px = max(ltp - config.slippage_rs, 0.5)
+        if ic:
+            # Iron Condor EXIT = buying back both legs
+            # Slippage ADDS to buyback price (worse for us)
+            exit_px   = round(ltp + config.slippage_rs, 2)
+            # STT on SELL (our original open) — on total premium, both legs
+            brokerage = BROKERAGE_PER_LOT * config.lots * 2   # 2 legs
+            stt       = trade.entry_price * lot * config.lots * STT_SELL_PCT / 100
+            exchange  = trade.entry_price * lot * config.lots * EXCHANGE_CHARGES / 100
+            costs     = round(brokerage + stt + exchange, 2)
+            # Profit = premium received - premium paid back
+            pnl_pts   = round(trade.entry_price - exit_px, 2)
+        else:
+            # BUY CE / BUY PE EXIT = selling the option
+            # Slippage REDUCES sell price (worse for us)
+            exit_px   = max(ltp - config.slippage_rs, 0.5)
+            brokerage = BROKERAGE_PER_LOT * config.lots
+            stt       = exit_px * lot * config.lots * STT_SELL_PCT / 100
+            exchange  = exit_px * lot * config.lots * EXCHANGE_CHARGES / 100
+            costs     = round(brokerage + stt + exchange, 2)
+            pnl_pts   = round(exit_px - trade.entry_price, 2)
 
-        # Costs
-        brokerage = BROKERAGE_PER_LOT * config.lots
-        stt       = exit_px * lot * config.lots * STT_SELL_PCT / 100
-        exchange  = exit_px * lot * config.lots * EXCHANGE_CHARGES / 100
-        costs     = round(brokerage + stt + exchange, 2)
-
-        pnl_pts = round(exit_px - trade.entry_price, 2)
         pnl_pct = round(pnl_pts / trade.entry_price * 100, 1) \
                   if trade.entry_price > 0 else 0
         pnl_rs  = round(pnl_pts * lot * config.lots - costs, 2)
