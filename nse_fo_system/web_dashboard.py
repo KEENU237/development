@@ -32,7 +32,7 @@ st.set_page_config(
     page_title="NSE F&O Live Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -246,6 +246,36 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     risk_obj = st.session_state["risk"]
     cache    = {}
 
+    # ── Other symbol (NIFTY↔BANKNIFTY) for dual signal panel ─────────────────
+    other_symbol = {"NIFTY": "BANKNIFTY", "BANKNIFTY": "NIFTY",
+                    "FINNIFTY": "NIFTY"}.get(symbol, "BANKNIFTY")
+
+    # ── Pre-warm instruments cache + compute expiries BEFORE threads ──────────
+    # Reason: kite.instruments("NFO") is a large download (~2MB).
+    # If multiple threads call it simultaneously → Zerodha rate-limits/timeouts
+    # → ALL NFO data (PCR, OI, MaxPain) returns empty → no signals ever.
+    # Solution: download ONCE here (cached 30 min), then all threads use cache.
+    _sym_expiries = {}
+    try:
+        _instr = kite._get_instruments_cached()   # warms 30-min cache
+        from datetime import date as _date
+        _today = _date.today()
+        for _s in [symbol, other_symbol, "NIFTY", "BANKNIFTY"]:
+            _exps = sorted(set(
+                i["expiry"] for i in _instr
+                if i["name"] == _s
+                and i["instrument_type"] in ("CE", "PE")
+                and i["expiry"] >= _today
+            ))
+            if _exps:
+                _sym_expiries[_s] = _exps[0].isoformat()
+    except Exception as _e:
+        logger.warning(f"Expiry pre-compute failed: {_e}")
+
+    _nifty_exp  = _sym_expiries.get("NIFTY",     expiry)
+    _bnk_exp    = _sym_expiries.get("BANKNIFTY", expiry)
+    _other_exp  = _sym_expiries.get(other_symbol, expiry)
+
     # ── Worker functions (parallel chalenge) ─────────────────────────────────
     def _fetch_prices():
         try:
@@ -273,7 +303,8 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
 
     def _fetch_pcr(sym):
         try:
-            sym_exp = get_nearest_expiry(sym, kite=kite.kite).isoformat()
+            # Use pre-computed expiry — avoids kite.instruments() inside thread
+            sym_exp = _nifty_exp if sym == "NIFTY" else _bnk_exp
             return sym, pcr_obj.get_pcr(sym, sym_exp)
         except Exception as exc:
             logger.error(f"PCR {sym}: {exc}")
@@ -308,18 +339,37 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
             logger.error(f"VP fetch: {exc}")
             return {}
 
+    def _fetch_other_oi_chain():
+        """Other symbol ki OI chain — dual signal panel ke liye."""
+        try:
+            chain = pcr_obj.get_oi_chain(other_symbol, _other_exp, 10)
+            return _other_exp, chain
+        except Exception as exc:
+            logger.error(f"Other OI Chain ({other_symbol}): {exc}")
+            return _other_exp, []
+
+    def _fetch_other_max_pain():
+        """Other symbol ka max pain — dual signal panel ke liye."""
+        try:
+            return mp_obj.compute(other_symbol, _other_exp)
+        except Exception as exc:
+            logger.error(f"Other MaxPain ({other_symbol}): {exc}")
+            return None
+
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        f_prices   = ex.submit(_fetch_prices)
-        f_oi       = ex.submit(_fetch_oi_chain)
-        f_mp       = ex.submit(_fetch_max_pain)
-        f_pcr_n    = ex.submit(_fetch_pcr, "NIFTY")
-        f_pcr_bn   = ex.submit(_fetch_pcr, "BANKNIFTY")
-        f_uoa      = ex.submit(_fetch_uoa)
-        f_risk     = ex.submit(_fetch_risk)
-        f_vp       = ex.submit(_fetch_vp)
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        f_prices      = ex.submit(_fetch_prices)
+        f_oi          = ex.submit(_fetch_oi_chain)
+        f_mp          = ex.submit(_fetch_max_pain)
+        f_pcr_n       = ex.submit(_fetch_pcr, "NIFTY")
+        f_pcr_bn      = ex.submit(_fetch_pcr, "BANKNIFTY")
+        f_uoa         = ex.submit(_fetch_uoa)
+        f_risk        = ex.submit(_fetch_risk)
+        f_vp          = ex.submit(_fetch_vp)
+        f_other_oi    = ex.submit(_fetch_other_oi_chain)
+        f_other_mp    = ex.submit(_fetch_other_max_pain)
 
     # ── Collect results (timeout se kabhi hang nahi hoga) ────────────────────
     def _safe(fut, default, timeout=TIMEOUT):
@@ -364,6 +414,30 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     except Exception as exc:
         logger.error(f"GEX: {exc}")
         cache["gex_data"] = {}
+
+    # ── Other symbol cache — dual signal panel ke liye ────────────────────────
+    other_oi_result          = _safe(f_other_oi, (expiry, []))
+    cache["other_symbol"]    = other_symbol
+    cache["other_expiry"]    = other_oi_result[0]
+    cache["other_oi_chain"]  = other_oi_result[1]
+    cache["other_mp_result"] = _safe(f_other_mp, None)
+
+    # Build mini-cache: prices + PCR shared; OI/MP from other symbol
+    _other_mini = {
+        "prices":    cache["prices"],
+        "oi_chain":  cache["other_oi_chain"],
+        "mp_result": cache["other_mp_result"],
+        "pcr_data":  cache["pcr_data"],
+        "iv_data":   {},   # no extra API calls; GEX will use VIX fallback
+        "vp_data":   {},
+        "expiry":    cache["other_expiry"],
+    }
+    try:
+        _other_mini["gex_data"] = _calc_gex(other_symbol, cache["other_expiry"], _other_mini)
+    except Exception as exc:
+        logger.error(f"Other GEX: {exc}")
+        _other_mini["gex_data"] = {}
+    cache["other_cache"] = _other_mini
 
     cache["fetched_at"] = datetime.now().strftime("%H:%M:%S")
     return cache
@@ -1194,22 +1268,71 @@ def render_header(symbol, expiry, cache):
 
 def render_market_overview(cache):
     prices  = cache.get("prices", {})
-    entries = [
-        ("NSE:NIFTY 50",          "📊 NIFTY 50",   False),
-        ("NSE:NIFTY BANK",        "🏦 NIFTY BANK",  False),
-        ("NSE:NIFTY FIN SERVICE", "💹 FIN NIFTY",   False),
-        ("NSE:INDIA VIX",         "⚡ INDIA VIX",    True),
-    ]
-    cols = st.columns(4)
-    for col, (key, label, is_vix) in zip(cols, entries):
-        ltp = prices.get(key, 0)
-        with col:
-            if is_vix and ltp:
-                note  = "High Fear!" if ltp > 20 else ("Low Vol" if ltp < 14 else "Moderate")
-                st.metric(label, f"{ltp:,.2f}", note,
-                          delta_color="inverse" if ltp > 20 else "normal")
-            else:
-                st.metric(label, f"₹{ltp:,.2f}" if ltp else "—")
+    n50  = prices.get("NSE:NIFTY 50",          0)
+    bnk  = prices.get("NSE:NIFTY BANK",        0)
+    fin  = prices.get("NSE:NIFTY FIN SERVICE", 0)
+    vix  = prices.get("NSE:INDIA VIX",         0)
+
+    vix_clr  = "#ff1744" if vix > 20 else ("#00c853" if vix < 14 else "#ff6d00")
+    vix_note = "High Fear" if vix > 20 else ("Low Vol" if vix < 14 else "Moderate")
+
+    def _fmt(v): return f"₹{v:,.0f}" if v else "—"
+
+    st.markdown(
+        f"<div style='padding:8px 14px;background:#f8f9fd;"
+        f"border:1px solid #e0e4ef;border-radius:8px;"
+        f"display:flex;align-items:center;flex-wrap:wrap;gap:4px'>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>NIFTY 50</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(n50)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>BANK</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(bnk)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>FIN NIFTY</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:#1a1a2e'>{_fmt(fin)}</span>"
+        f"<span style='color:#e0e4ef;margin:0 12px'>|</span>"
+        f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>VIX</span>"
+        f"&nbsp;<span style='font-size:16px;font-weight:700;color:{vix_clr}'>{vix:.2f}</span>"
+        f"&nbsp;<span style='background:{vix_clr}22;color:{vix_clr};padding:2px 9px;"
+        f"border-radius:10px;font-size:11px;font-weight:600'>{vix_note}</span>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── PCR Row — inline, compact ─────────────────────────────────────────────
+    pcr_data = cache.get("pcr_data", {})
+    zone_col = {
+        "EXTREME_BULL": "#00c853", "BULLISH":  "#69f0ae",
+        "NEUTRAL":      "#ffd740", "BEARISH":  "#ff6d00",
+        "EXTREME_BEAR": "#ff1744",
+    }
+    if pcr_data:
+        parts = []
+        for sym in ["NIFTY", "BANKNIFTY"]:
+            if sym not in pcr_data:
+                continue
+            r, trend = pcr_data[sym]
+            clr   = zone_col.get(r.zone, "#888")
+            t_ico = {"▲": "▲", "▼": "▼", "→": "→"}.get(trend, "")
+            parts.append(
+                f"<span style='color:#5a6a8a;font-size:12px;font-weight:600'>{sym}</span>"
+                f"&nbsp;<span style='font-size:18px;font-weight:700;color:{clr}'>{r.pcr:.2f}</span>"
+                f"&nbsp;<span style='color:{clr};font-size:11px'>{t_ico}</span>"
+                f"&nbsp;<span style='background:{clr}22;color:{clr};padding:2px 9px;"
+                f"border-radius:10px;font-size:11px;font-weight:600'>{r.zone}</span>"
+                f"&nbsp;<span style='color:#aab0c0;font-size:11px'>Signal: {r.signal}</span>"
+            )
+        if parts:
+            divider = "<span style='color:#e0e4ef;font-size:16px;margin:0 16px'>|</span>"
+            st.markdown(
+                f"<div style='margin-top:10px;padding:8px 14px;background:#f8f9fd;"
+                f"border:1px solid #e0e4ef;border-radius:8px;display:flex;"
+                f"align-items:center;flex-wrap:wrap;gap:4px'>"
+                f"<span style='color:#8a96b0;font-size:10px;font-weight:600;"
+                f"text-transform:uppercase;letter-spacing:0.6px;margin-right:12px'>PCR</span>"
+                f"{divider.join(parts)}</div>",
+                unsafe_allow_html=True
+            )
 
 
 def render_oi_chain(cache, symbol):
@@ -1293,6 +1416,11 @@ def render_oi_chain(cache, symbol):
             "BUILD":  build,
             "_atm":   r.strike == atm,
         })
+
+    # ── Auto-scroll to ATM: start display 2 rows before ATM ─────────────────
+    atm_pos = next((i for i, r in enumerate(rows) if r["_atm"]), 0)
+    start   = max(0, atm_pos - 2)
+    rows    = rows[start:]
 
     df       = pd.DataFrame(rows)
     atm_mask = df["_atm"].tolist()
@@ -1981,46 +2109,50 @@ def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
     pe_strictly_below = [(s, v) for s, v in pe_below.items() if s < atm]
     nearest_put  = max(pe_strictly_below, key=lambda x: x[0]) if pe_strictly_below else None
 
-    score_penalty = 0
+    ce_score_penalty = 0   # penalty applied to BUY CE path (CE resistance)
+    pe_score_penalty = 0   # penalty applied to BUY PE path (PE support = blocks downside)
     ce_warning    = ""
     pe_warning    = ""
 
-    # ── Call Wall warning (for BUY CE) ────────────────────────────────────────
+    # ── Call Wall — resistance above spot, penalises BUY CE only ─────────────
     if nearest_call:
-        dist    = nearest_call[0] - atm
-        oi_l    = to_l(nearest_call[1])
-        strike  = nearest_call[0]
+        dist   = nearest_call[0] - atm
+        oi_l   = to_l(nearest_call[1])
+        strike = nearest_call[0]
         if dist <= step:
-            score_penalty -= 15
+            ce_score_penalty -= 15
             ce_warning = f"🧱 Bahut badi CALL WALL {strike} pe ({oi_l}L OI) — Sirf {dist} pts door! Target block ho sakta hai"
         elif dist <= step * 2:
-            score_penalty -= 8
+            ce_score_penalty -= 8
             ce_warning = f"⚠️ Call Wall: {strike} pe {oi_l}L OI — {dist} pts door, thodi resistance milegi"
         else:
             ce_warning = f"✅ Resistance {strike} pe ({oi_l}L OI) — {dist} pts door, abhi path clear hai"
 
-    # ── Put Wall warning (for BUY PE) ─────────────────────────────────────────
+    # ── Put Wall — support below spot, penalises BUY PE only ─────────────────
+    # A large PUT wall means MMs will defend that level — price may bounce, hurting BUY PE.
     if nearest_put:
-        dist    = atm - nearest_put[0]
-        oi_l    = to_l(nearest_put[1])
-        strike  = nearest_put[0]
+        dist   = atm - nearest_put[0]
+        oi_l   = to_l(nearest_put[1])
+        strike = nearest_put[0]
         if dist <= step:
-            score_penalty -= 15
-            pe_warning = f"🛡️ Bahut bada PUT WALL {strike} pe ({oi_l}L OI) — Sirf {dist} pts neeche! Market rok sakta hai"
+            pe_score_penalty -= 15
+            pe_warning = f"🛡️ Bahut bada PUT WALL {strike} pe ({oi_l}L OI) — Sirf {dist} pts neeche! Bounce possible, BUY PE risky"
         elif dist <= step * 2:
-            score_penalty -= 8
-            pe_warning = f"⚠️ Put Wall: {strike} pe {oi_l}L OI — {dist} pts neeche, support hai"
+            pe_score_penalty -= 8
+            pe_warning = f"⚠️ Put Wall: {strike} pe {oi_l}L OI — {dist} pts neeche, support strong"
         else:
             pe_warning = f"✅ Support {strike} pe ({oi_l}L OI) — {dist} pts neeche, bearish move possible"
 
     return {
-        "call_walls":    [(s, to_l(v)) for s, v in top_ce],
-        "put_walls":     [(s, to_l(v)) for s, v in top_pe],
-        "nearest_call":  (nearest_call[0], to_l(nearest_call[1])) if nearest_call else None,
-        "nearest_put":   (nearest_put[0],  to_l(nearest_put[1]))  if nearest_put  else None,
-        "ce_warning":    ce_warning,
-        "pe_warning":    pe_warning,
-        "score_penalty": score_penalty,
+        "call_walls":        [(s, to_l(v)) for s, v in top_ce],
+        "put_walls":         [(s, to_l(v)) for s, v in top_pe],
+        "nearest_call":      (nearest_call[0], to_l(nearest_call[1])) if nearest_call else None,
+        "nearest_put":       (nearest_put[0],  to_l(nearest_put[1]))  if nearest_put  else None,
+        "ce_warning":        ce_warning,
+        "pe_warning":        pe_warning,
+        "ce_score_penalty":  ce_score_penalty,
+        "pe_score_penalty":  pe_score_penalty,
+        "score_penalty":     ce_score_penalty,   # legacy key — kept for render compat
     }
 
 
@@ -2029,22 +2161,27 @@ def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 def generate_trade_signal(cache: dict, symbol: str) -> dict:
     """
-    Smart Trade Signal Engine v2.0
+    Smart Trade Signal Engine v4.0
     ─────────────────────────────────────────────────────────
-    6 factors analyze karta hai:
-      1. PCR value + trend
-      2. OI Build signal (FL/FS/LU/SC)
-      3. VIX level
-      4. IV Rank
-      5. GEX Regime
-      6. Max Pain / Support / Resistance
+    7 factors — confluence required (min 3 agree):
+      1. PCR (value + trend combined, max ±15) — single source, no double-count
+      2. OI Build — direction-aware CE/PE LTP comparison (±20)
+      3. VIX level           (±10)
+      4. IV Rank             (±10)
+      5. GEX Regime + direction (±10) — gex_total sign validated
+      6. Max Pain direction  (±8)
+      7. Volume Profile POC  (±10)
 
-    Smart Strike Selection:
-      Score  > 60 + IV < 30  → 1 OTM strike (cheap + leveraged)
-      Score 30–60             → ATM strike (safe)
-      VIX > 20                → ATM only (safer in high fear)
-      Sell mode               → OI-based resistance/support strikes
+    Signal flow:
+      Iron Condor (sell_mode + iv_rank>50 + score≥15 + NOT strong directional)
+      → NO TRADE (score < threshold or no confluence)
+      → NO TRADE (range_bound_block or block_buying)
+      → BUY CE / BUY PE
+      → Iron Condor fallback (VIX≥25 blocks directional but sell conditions met)
     """
+    from datetime import date, time as dtime
+    import datetime as _dt
+
     sym_map = {
         "NIFTY":     "NSE:NIFTY 50",
         "BANKNIFTY": "NSE:NIFTY BANK",
@@ -2056,6 +2193,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     iv_data   = cache.get("iv_data",  {})
     mp_result = cache.get("mp_result")
     gex_data  = cache.get("gex_data", {})
+    vp_data   = cache.get("vp_data",  {})
 
     spot = prices.get(sym_map.get(symbol, ""), 0)
     vix  = prices.get("NSE:INDIA VIX", 0)
@@ -2063,16 +2201,83 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     if not spot:
         return {"signal": "NO TRADE", "reason": "Market data unavailable", "score": 0}
 
+    # ── Market closed / holiday / no data check ──────────────────────────────
+    mkt_status  = get_market_status()
+    data_missing = (not oi_chain and not pcr_data and not mp_result)
+    if mkt_status in ("HOLIDAY",):
+        return {
+            "signal":  "MARKET CLOSED",
+            "reason":  "NSE Trading Holiday — no signals today.",
+            "score":   0,
+            "vix":     vix,
+            "status":  mkt_status,
+        }
+    if mkt_status != "OPEN" and data_missing:
+        return {
+            "signal":  "MARKET CLOSED",
+            "reason":  f"Market is {mkt_status} — live OI/PCR data not available.",
+            "score":   0,
+            "vix":     vix,
+            "status":  mkt_status,
+        }
+
     score     = 0
     step      = 50 if symbol == "NIFTY" else 100
     atm       = round(spot / step) * step
     lot       = get_lot_size(symbol)
-    MAX_LOSS  = 2000   # 2% of ₹1L
+    MAX_LOSS  = 3000   # ₹3000 max risk per trade
 
-    # ── Factor checklist (dikhega dashboard mein) ─────────────────────────────
-    factors = {}
+    factors      = {}
+    bull_count   = 0   # how many factors are bullish
+    bear_count   = 0   # how many factors are bearish
 
-    # ── 1. PCR ────────────────────────────────────────────────────────────────
+    # ── Time of day check ─────────────────────────────────────────────────────
+    now_time     = _dt.datetime.now().time()
+    opening_risk = dtime(9, 15) <= now_time <= dtime(9, 45)
+    closing_risk = dtime(15, 15) <= now_time < dtime(15, 31)
+    time_warning = ""
+    if opening_risk:
+        time_warning = "⚠️ 9:15-9:45 — High volatility window. Wait for 9:45 for cleaner signals."
+    elif closing_risk:
+        time_warning = "⚠️ Market closing soon (15:15–15:30) — avoid fresh entries."
+
+    # ── Opening hard block (9:15–9:30) ───────────────────────────────────────
+    # First 15 minutes: gap opens, spike reversals, fake breakouts — all 8 factors
+    # read noise, not signal. Hard block prevents any entry in this window.
+    if dtime(9, 15) <= now_time < dtime(9, 30) and get_market_status() == "OPEN":
+        return {
+            "signal":       "NO TRADE",
+            "reason":       "9:15–9:30 Opening Spike — wait for price to settle (9:30+)",
+            "score":        0,
+            "factors":      {},
+            "vix":          prices.get("NSE:INDIA VIX", 0),
+            "pcr":          0,
+            "build":        "⚪",
+            "time_warning": "🚫 Hard block: 9:15–9:30 opening window. Re-enter at 9:30.",
+            "is_expiry_day": False,
+        }
+
+    # ── Expiry day check ──────────────────────────────────────────────────────
+    today         = date.today()
+    expiry_str    = cache.get("expiry", "")
+    is_expiry_day = False
+    if expiry_str:
+        _exp_date = None
+        for _fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%B-%Y", "%d%b%Y", "%d%B%Y", "%Y/%m/%d"):
+            try:
+                _exp_date = _dt.datetime.strptime(expiry_str.upper(), _fmt.upper()).date()
+                break
+            except ValueError:
+                continue
+        if _exp_date is not None:
+            is_expiry_day = (today == _exp_date)
+        else:
+            logger.warning(f"Could not parse expiry date {expiry_str!r} — assuming expiry day (fail-safe)")
+            is_expiry_day = True  # fail-safe: block option buying on unknown expiry format
+
+    # ── 1. PCR — combined value + trend, capped at ±15 ───────────────────────
+    # Merging both into one factor prevents PCR from dominating 66% of the threshold.
+    # Base ±12 from value; trend nudges ±3 — total never exceeds ±15.
     pcr_value = 0
     pcr_info  = pcr_data.get(symbol)
     pcr_trend = "→"
@@ -2080,254 +2285,466 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         r, trend = pcr_info
         pcr_value = r.pcr
         pcr_trend = trend
-        if r.pcr > 1.2:
-            score += 20
-            factors["PCR"] = ("✅", f"{r.pcr:.2f} {trend}", "Bullish", "#00c853")
-        elif r.pcr < 0.8:
-            score -= 20
-            factors["PCR"] = ("❌", f"{r.pcr:.2f} {trend}", "Bearish", "#ff1744")
-        else:
-            factors["PCR"] = ("⚠️", f"{r.pcr:.2f} {trend}", "Neutral", "#ffd740")
-        if trend == "▲":
-            score += 15
-        elif trend == "▼":
-            score -= 15
-    else:
-        factors["PCR"] = ("⚠️", "N/A", "No data", "#555")
 
-    # ── 2. OI Build Signal ────────────────────────────────────────────────────
-    # Threshold = 5% of total OI at that strike (min 200, max 5000)
-    # Fixed 500 ki jagah relative threshold — expiry week mein false signals nahi aayenge
-    atm_build = "⚪"
+        if r.pcr >= 1.3:   pcr_score = 12
+        elif r.pcr >= 1.0: pcr_score = 7
+        elif r.pcr <= 0.7: pcr_score = -12
+        elif r.pcr < 1.0:  pcr_score = -7
+        else:               pcr_score = 0
+
+        if trend == "▲":   pcr_score = min(15,  pcr_score + 3)
+        elif trend == "▼": pcr_score = max(-15, pcr_score - 3)
+
+        if pcr_score > 0:
+            score += pcr_score; bull_count += 1
+            _lbl   = "Strong Bullish" if pcr_score >= 12 else "Bullish"
+            _col   = "#00c853"       if pcr_score >= 12 else "#69f0ae"
+            factors["PCR"] = ("✅", f"{r.pcr:.2f} {trend}", f"{_lbl} (PCR+trend → {pcr_score:+})", _col)
+        elif pcr_score < 0:
+            score += pcr_score; bear_count += 1
+            _lbl   = "Strong Bearish" if pcr_score <= -12 else "Bearish"
+            _col   = "#ff1744"        if pcr_score <= -12 else "#ff6d00"
+            factors["PCR"] = ("❌", f"{r.pcr:.2f} {trend}", f"{_lbl} (PCR+trend → {pcr_score:+})", _col)
+        else:
+            factors["PCR"] = ("⚪", f"{r.pcr:.2f} {trend}", "Neutral PCR", "#888")
+    else:
+        factors["PCR"] = ("⚪", "N/A", "No data", "#555")
+
+    # ── 3. OI Build — direction-aware (±20) ──────────────────────────────────
+    # CE OI up + CE LTP > PE LTP  → buyers entering  (bullish)
+    # CE OI up + CE LTP < PE LTP  → call writers      (bearish — they collect premium)
+    # PE OI up + PE LTP > CE LTP  → put buyers        (bearish)
+    # PE OI up + PE LTP < CE LTP  → put writers       (bullish — they collect premium)
+    atm_build  = "⚪"
     atm_ce_ltp = atm_pe_ltp = 0
     for row in oi_chain:
-        if abs(row.strike - atm) <= step:
-            atm_ce_ltp = row.ce_ltp
-            atm_pe_ltp = row.pe_ltp
+        if int(row.strike) == int(atm):      # exact ATM match only (H-03)
+            atm_ce_ltp = row.ce_ltp or 0
+            atm_pe_ltp = row.pe_ltp or 0
             total_oi_at_strike = (row.ce_oi or 0) + (row.pe_oi or 0)
-            oi_threshold = max(200, min(5000, int(total_oi_at_strike * 0.05)))
+            oi_threshold = max(300, min(8000, int(total_oi_at_strike * 0.06)))
 
-            if row.ce_oi_chg > oi_threshold:
-                atm_build = "FL"; score += 25
-                factors["OI Build"] = ("✅", f"Fresh Long (+{row.ce_oi_chg:,})", "Bulls entering", "#00c853")
-            elif row.pe_oi_chg > oi_threshold:
-                atm_build = "FS"; score -= 25
-                factors["OI Build"] = ("❌", f"Fresh Short (+{row.pe_oi_chg:,})", "Bears entering", "#ff1744")
-            elif row.ce_oi_chg < -oi_threshold:
-                atm_build = "LU"; score -= 10
-                factors["OI Build"] = ("⚠️", f"Long Unwind ({row.ce_oi_chg:,})", "Bulls exiting", "#ff6d00")
-            elif row.pe_oi_chg < -oi_threshold:
-                atm_build = "SC"; score += 10
-                factors["OI Build"] = ("✅", f"Short Cover ({row.pe_oi_chg:,})", "Bears exiting", "#00c853")
+            ce_chg = row.ce_oi_chg or 0
+            pe_chg = row.pe_oi_chg or 0
+
+            if ce_chg > oi_threshold:
+                if atm_ce_ltp > 0 and atm_pe_ltp > 0:
+                    # CE LTP rising relative to PE LTP → call buyers (bullish)
+                    # CE LTP falling relative to PE LTP → call writers (bearish)
+                    if atm_ce_ltp >= atm_pe_ltp * 0.9:
+                        atm_build = "FL"; score += 15; bull_count += 1
+                        factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | CE₹{atm_ce_ltp:.0f} PE₹{atm_pe_ltp:.0f}",
+                                               "Fresh Call Buy — Buyers entering (bullish)", "#69f0ae")
+                    else:
+                        atm_build = "CW"; score -= 10; bear_count += 1
+                        factors["OI Build"] = ("❌", f"CE OI +{ce_chg:,} | CE₹{atm_ce_ltp:.0f} < PE₹{atm_pe_ltp:.0f}",
+                                               "Call Writing — Sellers entering at resistance (bearish)", "#ff6d00")
+                elif atm_ce_ltp > 0:
+                    atm_build = "FL"; score += 10; bull_count += 1
+                    factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | CE₹{atm_ce_ltp:.0f}",
+                                           "CE OI Build — likely bullish (PE LTP unavailable)", "#69f0ae")
+                else:
+                    factors["OI Build"] = ("⚪", f"CE OI +{ce_chg:,}",
+                                           "CE OI up but no LTP data — inconclusive", "#888")
+
+            elif pe_chg > oi_threshold:
+                if atm_pe_ltp > 0 and atm_ce_ltp > 0:
+                    if atm_pe_ltp >= atm_ce_ltp * 0.9:
+                        atm_build = "FS"; score -= 20; bear_count += 1
+                        factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f} CE₹{atm_ce_ltp:.0f}",
+                                               "Fresh Put Buy — Bears entering (bearish)", "#ff1744")
+                    else:
+                        atm_build = "PW"; score += 10; bull_count += 1
+                        factors["OI Build"] = ("✅", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f} < CE₹{atm_ce_ltp:.0f}",
+                                               "Put Writing — Sellers at support (bullish)", "#69f0ae")
+                elif atm_pe_ltp > 0:
+                    atm_build = "FS"; score -= 15; bear_count += 1
+                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f}",
+                                           "PE OI building — likely bearish (CE LTP unavailable)", "#ff6d00")
+                else:
+                    atm_build = "FS"; score -= 10; bear_count += 1
+                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,}",
+                                           "PE OI building — Bearish", "#ff6d00")
+
+            elif ce_chg < -oi_threshold:
+                atm_build = "LU"; score -= 10; bear_count += 1
+                factors["OI Build"] = ("⚠️", f"CE OI {ce_chg:,}",
+                                       "Long Unwind — Bulls exiting", "#ff6d00")
+
+            elif pe_chg < -oi_threshold:
+                atm_build = "SC"; score += 10; bull_count += 1
+                factors["OI Build"] = ("✅", f"PE OI {pe_chg:,}",
+                                       "Short Cover — Bears exiting", "#69f0ae")
             else:
-                factors["OI Build"] = ("⚪", f"Neutral (threshold {oi_threshold:,})", "No significant change", "#555")
+                factors["OI Build"] = ("⚪", f"Threshold {oi_threshold:,} not breached",
+                                       "No significant OI change", "#888")
             break
-    if "OI Build" not in factors:
-        factors["OI Build"] = ("⚪", "⚪", "Waiting for OI data", "#555")
 
-    # ── 3. VIX ────────────────────────────────────────────────────────────────
-    sell_mode = False
+    if "OI Build" not in factors:
+        factors["OI Build"] = ("⚪", "No data", "OI chain not loaded", "#555")
+
+    # ── 4. VIX (±10) ─────────────────────────────────────────────────────────
+    sell_mode        = False
+    range_bound_block = False   # GEX range-bound → block ALL directional entries
+    block_buying     = False    # VIX 25+ → block option buying (IV crush risk)
     if vix > 0:
-        if vix < 15:
-            score += 10
-            factors["VIX"] = ("✅", f"{vix:.1f}", "Low fear — Buy ok", "#00c853")
-        elif vix > 20:
-            score -= 10
-            sell_mode = True
-            factors["VIX"] = ("⚠️", f"{vix:.1f}", "High fear — Sell premium", "#ffd740")
+        if vix < 13:
+            score += 10; bull_count += 1
+            factors["VIX"] = ("✅", f"{vix:.1f}", "Very low fear — Buy confidently", "#00c853")
+        elif vix < 17:
+            score += 5; bull_count += 1
+            factors["VIX"] = ("✅", f"{vix:.1f}", "Low fear — Buy ok", "#69f0ae")
+        elif vix < 20:
+            factors["VIX"] = ("⚪", f"{vix:.1f}", "Moderate — Neutral", "#ffd740")
+        elif vix < 25:
+            # BUG FIX: was missing bear_count increment — VIX 20-25 IS bearish
+            score -= 10; sell_mode = True; bear_count += 1
+            factors["VIX"] = ("❌", f"{vix:.1f}", "High fear — Bearish / Sell premium", "#ff6d00")
         else:
-            factors["VIX"] = ("⚠️", f"{vix:.1f}", "Moderate", "#ffd740")
+            # VIX 25+ = extreme fear: IV is so elevated that option buying leads to
+            # IV crush even if direction is correct. Hard block on buying.
+            score -= 10; sell_mode = True; bear_count += 1; block_buying = True
+            factors["VIX"] = ("🚫", f"{vix:.1f}",
+                              f"Extreme fear (VIX 25+) — IV crush risk. BUY blocked. Only sell premium.",
+                              "#ff1744")
     else:
         factors["VIX"] = ("⚪", "N/A", "No data", "#555")
 
-    # ── 4. IV Rank ────────────────────────────────────────────────────────────
+    # ── 5. IV Rank (±10) ─────────────────────────────────────────────────────
     iv_rank = iv_data.get("iv_rank", 50)
-    if iv_rank > 60:
-        sell_mode = True
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Expensive — Sell", "#ffd740")
-    elif iv_rank < 30:
-        score += 10
-        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Cheap — Buy ok", "#00c853")
+    if iv_rank > 70:
+        sell_mode = True; score -= 5; bear_count += 1   # fix: was missing bear_count
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Very expensive — Strong sell signal", "#ff6d00")
+    elif iv_rank > 55:
+        sell_mode = True; score -= 3; bear_count += 1
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Elevated IV — Premium selling favoured", "#ffd740")
+    elif iv_rank < 20:
+        score += 10; bull_count += 1
+        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Very cheap — Buy options now", "#00c853")
+    elif iv_rank < 35:
+        score += 5; bull_count += 1
+        factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Cheap — Buying ok", "#69f0ae")
     else:
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Normal", "#ffd740")
+        factors["IV Rank"] = ("⚪", f"{iv_rank:.0f}%", "Normal IV — Neutral", "#888")
 
-    # ── 5. GEX ────────────────────────────────────────────────────────────────
+    # ── 6. GEX Regime (±10) ──────────────────────────────────────────────────
     gex_regime = gex_data.get("regime",    "NEUTRAL")
     gex_total  = gex_data.get("total_gex", 0)
-    gamma_wall = gex_data.get("gamma_wall", atm)
+    gamma_wall = gex_data.get("gamma_wall") or None   # fix: don't default to ATM (misleading label)
     flip_level = gex_data.get("flip_level", None)
 
     if gex_regime == "RANGE BOUND":
-        score -= 10; sell_mode = True
-        factors["GEX"] = ("⚠️", f"+{gex_total:.1f}Cr", "Range bound — Sell", "#ffd740")
+        # MMs are actively gamma-hedging to suppress big moves — directional entries fail here.
+        score -= 10; sell_mode = True; range_bound_block = True
+        factors["GEX"] = ("📦", f"{gex_total:+.1f}Cr",
+                          "RANGE BOUND — MM suppressing moves. BUY CE/PE blocked.", "#ff6d00")
     elif gex_regime == "VOLATILE / TRENDING":
-        score += 10 if score > 0 else -10
-        factors["GEX"] = ("✅", f"{gex_total:.1f}Cr", "Volatile — Buy ok", "#00c853")
+        # Only amplify if: direction established (|score| ≥ 15) AND gex_total sign confirms it.
+        # gex_total > 0 → MMs long gamma (bullish tilt), < 0 → short gamma (bearish tilt).
+        if abs(score) >= 15:
+            gex_dir   = 1 if gex_total >= 0 else -1
+            score_dir = 1 if score > 0     else -1
+            if gex_dir == score_dir:
+                bonus = gex_dir * 10
+                score += bonus
+                if bonus > 0: bull_count += 1
+                else:         bear_count += 1
+                factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — GEX confirms direction", "#00c853")
+            else:
+                factors["GEX"] = ("⚠️", f"{gex_total:+.1f}Cr", "Trending but GEX opposes signal — reduce size", "#ffd740")
+        else:
+            factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — but signal too weak to amplify", "#69f0ae")
     else:
-        factors["GEX"] = ("⚪", f"{gex_total:.1f}Cr", "Neutral", "#555")
+        factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Neutral GEX — No strong push", "#888")
 
-    # ── 6. Max Pain ───────────────────────────────────────────────────────────
+    # ── 7. Max Pain Direction (±8) — FIXED ───────────────────────────────────
     top_ce_oi = mp_result.top_ce_oi_strike if mp_result else int(atm + step * 4)
     top_pe_oi = mp_result.top_pe_oi_strike if mp_result else int(atm - step * 4)
     mp_strike = mp_result.max_pain_strike  if mp_result else atm
 
-    mp_dist = abs(spot - mp_strike)
-    if mp_dist < step * 2:
-        factors["Max Pain"] = ("✅", f"{int(mp_strike)}", "Near ATM — Balanced", "#00c853")
-    elif spot > mp_strike:
-        factors["Max Pain"] = ("⚠️", f"{int(mp_strike)}", "Above MP — may pull down", "#ffd740")
+    if mp_result and spot:
+        dist_pct = (mp_strike - spot) / spot * 100
+        if dist_pct > 0.5:          # Spot below max pain → pull UP
+            score += 8; bull_count += 1
+            factors["Max Pain"] = ("✅", f"MP {int(mp_strike)} ▲{dist_pct:.1f}%",
+                                   "Spot below Max Pain — price may drift UP", "#00c853")
+        elif dist_pct < -0.5:       # Spot above max pain → pull DOWN
+            score -= 8; bear_count += 1
+            factors["Max Pain"] = ("❌", f"MP {int(mp_strike)} ▼{abs(dist_pct):.1f}%",
+                                   "Spot above Max Pain — price may drift DOWN", "#ff1744")
+        else:
+            factors["Max Pain"] = ("⚪", f"MP {int(mp_strike)} ≈ Spot",
+                                   "Near max pain — balanced, no pull", "#888")
     else:
-        factors["Max Pain"] = ("⚠️", f"{int(mp_strike)}", "Below MP — may pull up", "#ffd740")
+        factors["Max Pain"] = ("⚪", "N/A", "Max pain not available", "#555")
 
-    # ── 7. Volume Profile POC ─────────────────────────────────────────────────
-    vp_data   = cache.get("vp_data", {})
+    # ── 8. Volume Profile POC (±10) ──────────────────────────────────────────
     poc_level = vp_data.get("poc")
     vp_step   = vp_data.get("step", step)
     if poc_level and spot:
         poc_dist = spot - poc_level
-        if poc_dist > vp_step:          # Price above POC → Bullish
-            score += 10
-            factors["POC"] = ("✅", f"{poc_level}  ▲{poc_dist:.0f}pts",
-                              "Price above POC — Bullish", "#00c853")
-        elif poc_dist < -vp_step:       # Price below POC → Bearish
-            score -= 10
-            factors["POC"] = ("❌", f"{poc_level}  ▼{abs(poc_dist):.0f}pts",
-                              "Price below POC — Bearish", "#ff1744")
-        else:                           # At POC → key S/R
-            factors["POC"] = ("⚠️", f"{poc_level}  ↔ AT POC",
-                              "Strongest S/R — watch for breakout", "#ffd740")
+        if poc_dist > vp_step:
+            score += 10; bull_count += 1
+            factors["Vol POC"] = ("✅", f"POC {int(poc_level)} | +{poc_dist:.0f}pts",
+                                  "Price above POC — Bullish structure", "#00c853")
+        elif poc_dist < -vp_step:
+            score -= 10; bear_count += 1
+            factors["Vol POC"] = ("❌", f"POC {int(poc_level)} | {poc_dist:.0f}pts",
+                                  "Price below POC — Bearish structure", "#ff1744")
+        else:
+            factors["Vol POC"] = ("⚪", f"POC {int(poc_level)} ↔ AT POC",
+                                  "At strongest S/R — wait for breakout", "#ffd740")
     else:
-        factors["POC"] = ("⚪", "N/A", "VP loading...", "#555")
+        factors["Vol POC"] = ("⚪", "N/A", "VP loading...", "#555")
 
-    # ── OI Wall Detection — score adjust + factor add ────────────────────────
+    # ── OI Wall Detection — directional penalties ─────────────────────────────
     oi_walls = _detect_oi_walls(oi_chain, spot, step)
     if oi_walls:
-        penalty = oi_walls.get("score_penalty", 0)
-        if score > 0:     # BUY CE direction
-            score = max(0, score + penalty)
+        if score > 0:
+            ce_pen  = oi_walls.get("ce_score_penalty", 0)   # only CE resistance hurts BUY CE
+            score   = max(0, score + ce_pen)
             ce_warn = oi_walls.get("ce_warning", "")
-            if penalty < -10:
-                factors["OI Wall"] = ("🧱", ce_warn, "Strong resistance — target block ho sakta hai", "#ff6d00")
-            elif penalty < 0:
-                factors["OI Wall"] = ("⚠️", ce_warn, "Resistance hai — thoda caution", "#ffd740")
+            if ce_pen < -10:
+                factors["OI Wall"] = ("🧱", ce_warn, "Strong resistance — target may get blocked", "#ff6d00")
+            elif ce_pen < 0:
+                factors["OI Wall"] = ("⚠️", ce_warn, "Resistance present — reduce size", "#ffd740")
             elif oi_walls.get("nearest_call"):
-                factors["OI Wall"] = ("✅", ce_warn, "Path clear", "#00c853")
-        elif score < 0:   # BUY PE direction
-            score = min(0, score - penalty)   # penalty already negative
+                factors["OI Wall"] = ("✅", ce_warn, "Path clear above", "#00c853")
+        elif score < 0:
+            pe_pen  = oi_walls.get("pe_score_penalty", 0)   # pe_pen is ≤ 0 (e.g. -15)
+            score   = min(0, score + abs(pe_pen))            # reduce bearish magnitude
             pe_warn = oi_walls.get("pe_warning", "")
-            if penalty < -10:
-                factors["OI Wall"] = ("🛡️", pe_warn, "Strong support — bearish move rok sakta hai", "#ff6d00")
-            elif penalty < 0:
-                factors["OI Wall"] = ("⚠️", pe_warn, "Support hai — thoda caution", "#ffd740")
+            if pe_pen < -10:
+                factors["OI Wall"] = ("🛡️", pe_warn, "Strong PUT support — bounce likely, BUY PE risky", "#ff6d00")
+            elif pe_pen < 0:
+                factors["OI Wall"] = ("⚠️", pe_warn, "PUT support nearby — monitor for breakdown", "#ffd740")
             elif oi_walls.get("nearest_put"):
-                factors["OI Wall"] = ("✅", pe_warn, "Path clear", "#00c853")
+                factors["OI Wall"] = ("✅", pe_warn, "Path clear below", "#00c853")
 
     abs_score = abs(score)
 
-    # ── NO TRADE ──────────────────────────────────────────────────────────────
-    if abs_score < 30:
-        return {
-            "signal":  "NO TRADE",
-            "reason":  "Signals mixed — setup clear nahi hai, wait karo",
-            "score":   abs_score,
-            "factors": factors,
-            "vix":     vix,
-            "pcr":     pcr_value,
-            "build":   atm_build,
-        }
+    # ── Adaptive thresholds — based on how much real data is available ────────
+    # When PCR/OI/MaxPain/IV APIs fail, fewer factors contribute.
+    # Requiring 3/8 confluence from 2-3 working factors is impossible → no signal ever.
+    # Solution: count real data sources, lower gate proportionally.
+    _data_count = sum([
+        bool(pcr_data.get(symbol)),  # PCR real
+        bool(oi_chain),              # OI chain loaded
+        bool(mp_result),             # Max Pain available
+        bool(gex_data),              # GEX calculated
+        bool(iv_data),               # IV calculated (not default)
+        vix > 0,                     # VIX available
+        bool(vp_data.get("poc")),    # Volume Profile loaded
+    ])
+    if _data_count >= 5:
+        _need_score, _need_confluence = 35, 3   # Full data — strict gate
+    elif _data_count >= 3:
+        _need_score, _need_confluence = 28, 2   # Partial data — relaxed gate
+    else:
+        _need_score, _need_confluence = 22, 2   # Poor data — very relaxed
 
-    # ── SELL — Iron Condor ────────────────────────────────────────────────────
-    if sell_mode and iv_rank > 55:
-        # CE sell: top CE OI strike (natural resistance)
-        sell_ce = int(top_ce_oi)
-        sell_pe = int(top_pe_oi)
+    # ── Confluence Gate ───────────────────────────────────────────────────────
+    _total_factors  = len(factors)
+    _bull_factors   = sum(1 for v in factors.values() if v[0] in ("✅",))
+    _bear_factors   = sum(1 for v in factors.values() if v[0] in ("❌", "🚫", "📦"))
+    if score > 0:
+        confluence_ok  = _bull_factors >= _need_confluence
+        confluence_msg = f"{_bull_factors}/{_total_factors} bullish factors"
+    elif score < 0:
+        confluence_ok  = _bear_factors >= _need_confluence
+        confluence_msg = f"{_bear_factors}/{_total_factors} bearish factors"
+    else:
+        confluence_ok  = False
+        confluence_msg = f"0/{_total_factors}"
 
-        # Gamma wall adjust — sell above wall for CE
-        if gamma_wall and gamma_wall > sell_ce:
-            sell_ce = int(gamma_wall) + step
-
-        # Estimate premiums from OI chain
-        ce_prem = pe_prem = 0
-        for row in oi_chain:
-            if int(row.strike) == sell_ce: ce_prem = row.ce_ltp
-            if int(row.strike) == sell_pe: pe_prem = row.pe_ltp
-
-        total_prem   = ce_prem + pe_prem
-        max_profit_r = round(total_prem * lot)
-        sl_premium   = round(total_prem * 2)
-
-        return {
-            "signal":       "SELL — Iron Condor",
-            "sell_ce":      sell_ce,
-            "sell_pe":      sell_pe,
-            "ce_prem":      ce_prem,
-            "pe_prem":      pe_prem,
-            "total_prem":   round(total_prem, 1),
-            "max_profit_r": max_profit_r,
-            "sl_premium":   sl_premium,
-            "sl_rule":      f"Exit agar koi bhi side ₹{sl_premium:.0f} ho jaye",
-            "score":        min(abs_score + 20, 100),
-            "factors":      factors,
-            "vix":          vix,
-            "pcr":          pcr_value,
-            "iv_rank":      iv_rank,
-            "timeframe":    "Weekly / Swing",
-            "gamma_wall":   gamma_wall,
-            "flip_level":   flip_level,
-            "strike_reason": f"CE at Resistance ({sell_ce}), PE at Support ({sell_pe})",
-        }
+    # ── Expiry Day — no buying ─────────────────────────────────────────────────
+    if is_expiry_day and not sell_mode:
+        sell_mode = True
+        factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
+                                "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
 
     # ── Smart Strike Selection for BUY ────────────────────────────────────────
     def _pick_strike_and_ltp(direction: str):
-        """
-        direction: 'CE' or 'PE'
-        Returns (strike, ltp, reason)
-        """
-        # ATM is default
         chosen = atm
         reason = "ATM strike (safest)"
 
-        # Strong signal + cheap IV → 1 OTM (more leverage)
-        if abs_score >= 55 and iv_rank < 30 and vix < 18:
-            if direction == "CE":
-                chosen = atm + step
-                reason = f"1 OTM ({atm+step}) — Strong signal + Cheap IV = More leverage"
-            else:
-                chosen = atm - step
-                reason = f"1 OTM ({atm-step}) — Strong signal + Cheap IV = More leverage"
+        # Very strong signal + cheap IV → 1 OTM
+        if abs_score >= 60 and iv_rank < 25 and vix < 16:
+            chosen = atm + step if direction == "CE" else atm - step
+            reason = f"1 OTM — Very strong signal + cheap IV ({iv_rank:.0f}%)"
 
-        # High VIX → stick to ATM
-        elif vix > 20:
+        # High VIX or expiry day → ATM only
+        elif vix > 20 or is_expiry_day:
             chosen = atm
-            reason = f"ATM ({atm}) — VIX high, ATM safer"
+            reason = f"ATM — {'VIX high' if vix > 20 else 'Expiry day'}, staying safe"
 
-        # Near gamma wall → use wall strike
-        elif gamma_wall and abs(atm - gamma_wall) <= step * 2:
-            chosen = int(gamma_wall)
-            reason = f"Gamma Wall ({int(gamma_wall)}) — Strongest magnet level"
+        # Near gamma wall — only use if wall is on the correct side of ATM (H-05)
+        elif gamma_wall:
+            wall_ok = (direction == "CE" and gamma_wall > atm and abs(atm - gamma_wall) <= step * 2) or \
+                      (direction == "PE" and gamma_wall < atm and abs(atm - gamma_wall) <= step * 2)
+            if wall_ok:
+                chosen = int(gamma_wall)
+                reason = f"Gamma Wall {int(gamma_wall)} — strongest magnetic level"
 
-        # Get LTP from OI chain
         ltp = 0
         for row in oi_chain:
             if int(row.strike) == chosen:
                 ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
                 break
-
-        # Fallback estimate
         if ltp <= 0:
             ltp = round(spot * 0.003)
 
+        # ── Greeks (Delta) filter — block deep OTM entries ──────────────────────
+        if chosen != atm:
+            try:
+                tte   = max(tte_years(expiry_str), 0.001)
+                sigma = max(iv_data.get("atm_iv", 0.0), vix, 8.0) / 100.0
+                g     = calc_greeks(spot, chosen, tte, sigma, direction)
+                if g is not None and abs(g.delta) < 0.15:
+                    chosen = atm
+                    reason = f"ATM fallback — delta {abs(g.delta):.2f} too low (deep OTM, theta risk)"
+                    ltp = 0
+                    for row in oi_chain:
+                        if int(row.strike) == atm:
+                            ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
+                            break
+                    if ltp <= 0:
+                        ltp = round(spot * 0.003)
+            except Exception:
+                pass  # never block signal due to greeks error
+
+        # ── Minimum premium guard — illiquid strikes skipped (L-01) ─────────────
+        min_prem = 15 if symbol == "NIFTY" else 25   # raised from 5/20/35
+        if ltp < min_prem:
+            if chosen != atm:
+                chosen = atm
+                reason = f"ATM fallback — OTM premium ₹{ltp:.0f} too thin (min ₹{min_prem})"
+                ltp = 0
+                for row in oi_chain:
+                    if int(row.strike) == atm:
+                        ltp = row.ce_ltp if direction == "CE" else row.pe_ltp
+                        break
+                if ltp <= 0:
+                    ltp = round(spot * 0.003)
+            if ltp < min_prem:
+                return int(chosen), 0, f"No liquid premium at ATM ₹{ltp:.0f} — skip signal"
+
         return int(chosen), ltp, reason
 
-    # ── BUY CE ────────────────────────────────────────────────────────────────
-    if score >= 30:
-        strike, entry, strike_reason = _pick_strike_and_ltp("CE")
-        entry  = max(entry, 5)
-        target = round(entry * 1.42)
-        sl     = round(entry * 0.72)
-        sl_pts = entry - sl
-        lots   = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+    # ── Dynamic Target/SL based on VIX ───────────────────────────────────────
+    if vix < 15:
+        gain_mult, sl_mult = 1.50, 0.70
+    elif vix < 20:
+        gain_mult, sl_mult = 1.42, 0.72
+    else:
+        gain_mult, sl_mult = 1.35, 0.65
 
+    # ── Helper to build Iron Condor return dict ───────────────────────────────
+    def _iron_condor_signal():
+        sell_ce = int(top_ce_oi)
+        sell_pe = int(top_pe_oi) - step     # L-02: one step below support, not at it
+
+        # Gamma wall adjust — sell CE above wall if wall is above ATM
+        if gamma_wall and gamma_wall > atm and gamma_wall > sell_ce:
+            sell_ce = int(gamma_wall) + step
+
+        ce_prem = pe_prem = 0
+        for row in oi_chain:
+            if int(row.strike) == sell_ce: ce_prem = row.ce_ltp or 0
+            if int(row.strike) == sell_pe: pe_prem = row.pe_ltp or 0
+
+        total_prem   = ce_prem + pe_prem
+        max_profit_r = round(total_prem * lot)
+        sl_premium   = round(total_prem * 1.5)
+        return {
+            "signal":        "SELL — Iron Condor",
+            "sell_ce":       sell_ce,
+            "sell_pe":       sell_pe,
+            "ce_prem":       ce_prem,
+            "pe_prem":       pe_prem,
+            "total_prem":    round(total_prem, 1),
+            "max_profit_r":  max_profit_r,
+            "sl_premium":    sl_premium,
+            "sl_rule":       f"Exit if either side crosses ₹{sl_premium:.0f}",
+            "score":         min(abs_score + 20, 100),
+            "confluence":    confluence_msg,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "iv_rank":       iv_rank,
+            "timeframe":     "Weekly / Swing",
+            "gamma_wall":    gamma_wall,
+            "flip_level":    flip_level,
+            "strike_reason": f"CE Resistance: {sell_ce} | PE Support: {sell_pe}",
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+        }
+
+    # ── C-01: Iron Condor — fires BEFORE directional gate ────────────────────
+    # Triggers when score is modest (not strong enough for directional) but
+    # selling conditions are favourable.  Has its own lower threshold = 15.
+    # strong_directional flag ensures condor doesn't override a clear BUY CE/PE.
+    CONDOR_MIN_SCORE = 15
+    _strong_directional = (
+        abs_score >= _need_score
+        and confluence_ok
+        and not range_bound_block
+        and not block_buying
+    )
+    if sell_mode and iv_rank > 50 and abs_score >= CONDOR_MIN_SCORE and not _strong_directional:
+        return _iron_condor_signal()
+
+    # ── NO TRADE — insufficient score or confluence for directional ───────────
+    if abs_score < _need_score or not confluence_ok:
+        reason = (f"Score {abs_score} < {_need_score}"
+                  if abs_score < _need_score
+                  else f"Only {confluence_msg} — need {_need_confluence}+ to confirm")
+        return {
+            "signal":        "NO TRADE",
+            "reason":        reason,
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+        }
+
+    # ── NO TRADE — directional blocked by risk guards ─────────────────────────
+    if range_bound_block or block_buying:
+        _block_reason = ("GEX: Market is RANGE BOUND — MMs suppressing directional moves"
+                         if range_bound_block
+                         else f"VIX {vix:.1f} ≥ 25 — Extreme IV, buying options risks IV crush")
+        return {
+            "signal":        "NO TRADE",
+            "reason":        _block_reason,
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+        }
+
+    # ── BUY CE ────────────────────────────────────────────────────────────────
+    if score >= _need_score:
+        strike, entry, strike_reason = _pick_strike_and_ltp("CE")
+        if entry <= 0:   # illiquid — fall back to NO TRADE
+            return {"signal": "NO TRADE", "reason": strike_reason,
+                    "score": abs_score, "factors": factors,
+                    "vix": vix, "pcr": pcr_value, "build": atm_build,
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+        entry    = max(entry, 15)        # L-01: absolute floor
+        target   = round(entry * gain_mult)
+        sl       = round(entry * sl_mult)
+        sl_pts   = entry - sl
+        lots     = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        gain_pct = round((gain_mult - 1) * 100)
+        loss_pct = round((1 - sl_mult) * 100)
         return {
             "signal":        "BUY CE",
             "strike":        strike,
@@ -2335,13 +2752,14 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "entry":         entry,
             "target":        target,
             "sl":            sl,
-            "gain_pct":      42,
-            "loss_pct":      28,
+            "gain_pct":      gain_pct,
+            "loss_pct":      loss_pct,
             "lot_size":      lot,
             "lots":          lots,
             "max_loss":      round(sl_pts * lot * lots),
             "max_profit":    round((target - entry) * lot * lots),
             "score":         min(score, 100),
+            "confluence":    confluence_msg,
             "factors":       factors,
             "vix":           vix,
             "pcr":           pcr_value,
@@ -2351,17 +2769,25 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
             "oi_walls":      oi_walls,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
     # ── BUY PE ────────────────────────────────────────────────────────────────
-    if score <= -30:
+    if score <= -_need_score:
         strike, entry, strike_reason = _pick_strike_and_ltp("PE")
-        entry  = max(entry, 5)
-        target = round(entry * 1.42)
-        sl     = round(entry * 0.72)
-        sl_pts = entry - sl
-        lots   = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
-
+        if entry <= 0:
+            return {"signal": "NO TRADE", "reason": strike_reason,
+                    "score": abs_score, "factors": factors,
+                    "vix": vix, "pcr": pcr_value, "build": atm_build,
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+        entry    = max(entry, 15)        # L-01: absolute floor
+        target   = round(entry * gain_mult)
+        sl       = round(entry * sl_mult)
+        sl_pts   = entry - sl
+        lots     = max(1, int(MAX_LOSS / (sl_pts * lot))) if sl_pts > 0 else 1
+        gain_pct = round((gain_mult - 1) * 100)
+        loss_pct = round((1 - sl_mult) * 100)
         return {
             "signal":        "BUY PE",
             "strike":        strike,
@@ -2369,13 +2795,14 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "entry":         entry,
             "target":        target,
             "sl":            sl,
-            "gain_pct":      42,
-            "loss_pct":      28,
+            "gain_pct":      gain_pct,
+            "loss_pct":      loss_pct,
             "lot_size":      lot,
             "lots":          lots,
             "max_loss":      round(sl_pts * lot * lots),
             "max_profit":    round((target - entry) * lot * lots),
             "score":         min(abs_score, 100),
+            "confluence":    confluence_msg,
             "factors":       factors,
             "vix":           vix,
             "pcr":           pcr_value,
@@ -2385,10 +2812,17 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "gamma_wall":    gamma_wall,
             "flip_level":    flip_level,
             "oi_walls":      oi_walls,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
         }
 
-    return {"signal": "NO TRADE", "reason": "Inconclusive", "score": abs_score,
-            "factors": factors}
+    # ── Iron Condor fallback — strong sell_mode overrides directional ─────────
+    # Handles: score=40 (directional) but VIX=26 (block_buying) blocks BUY CE/PE
+    if sell_mode and iv_rank > 50:
+        return _iron_condor_signal()
+
+    return {"signal": "NO TRADE", "reason": "Inconclusive after all checks",
+            "score": abs_score, "confluence": confluence_msg, "factors": factors}
 
 
 def render_volume_profile(cache: dict, symbol: str):
@@ -2712,8 +3146,8 @@ def _render_factor_checklist(factors: dict):
     )
 
 
-def render_trade_signal(cache: dict, symbol: str):
-    sig   = generate_trade_signal(cache, symbol)
+def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
+    sig   = precomputed if precomputed is not None else generate_trade_signal(cache, symbol)
     s     = sig.get("signal", "NO TRADE")
     score = sig.get("score", 0)
     bar   = "█" * int(score // 5) + "░" * (20 - int(score // 5))
@@ -2724,8 +3158,31 @@ def render_trade_signal(cache: dict, symbol: str):
         "BUY PE":             ("#c0392b", "🔴", "#fff5f5"),
         "SELL — Iron Condor": ("#1a56db", "💰", "#f0f4ff"),
         "NO TRADE":           ("#8a96b0", "⛔", "#f8f9fd"),
+        "MARKET CLOSED":      ("#5a6a8a", "🌙", "#f0f3fa"),
     }
     color, icon, bg = cfg.get(s, cfg["NO TRADE"])
+
+    # ── MARKET CLOSED ─────────────────────────────────────────────────────────
+    if s == "MARKET CLOSED":
+        mkt_status = sig.get("status", "CLOSED")
+        next_open  = "Kal 9:15 AM" if mkt_status == "CLOSED" else "Thodi der mein"
+        st.markdown(f"""
+        <div style="background:{bg};border:1px solid #dde2ef;border-radius:12px;
+                    padding:20px;text-align:center;margin-bottom:8px">
+            <div style="font-size:28px">{icon}</div>
+            <div style="font-size:16px;font-weight:700;color:#5a6a8a;margin-top:6px">
+                {symbol} — Market {mkt_status}</div>
+            <div style="color:#aab0c0;font-size:12px;margin-top:6px">
+                OI / PCR / Max Pain data tab ayega jab market khule</div>
+            <div style="margin-top:10px;padding:8px 16px;display:inline-block;
+                        background:#e8ecf8;border-radius:20px;">
+                <span style="color:#5a6a8a;font-size:12px">
+                    Next open: <b>{next_open}</b>
+                    &nbsp;|&nbsp; VIX: <b style="color:#ff6d00">{sig.get('vix',0):.1f}</b>
+                </span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        return
 
     # ── NO TRADE ──────────────────────────────────────────────────────────────
     if s == "NO TRADE":
@@ -2737,13 +3194,16 @@ def render_trade_signal(cache: dict, symbol: str):
                 NO TRADE</div>
             <div style="color:#aab0c0;font-size:13px;margin-top:8px">
                 {sig.get('reason','Mixed signals — wait karo')}</div>
-            <div style="color:#c0c8d8;font-size:11px;margin-top:10px">
-                Confidence: {score:.0f}% &nbsp;|&nbsp;
+            <div style="color:#c0c8d8;font-size:11px;margin-top:6px">
+                Confluence: {sig.get('confluence','—')} &nbsp;|&nbsp;
                 VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
                 PCR: {sig.get('pcr',0):.2f}
             </div>
         </div>""", unsafe_allow_html=True)
-        _render_factor_checklist(sig.get("factors", {}))
+        if sig.get("time_warning"):
+            st.warning(sig["time_warning"])
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
 
     # ── BUY CE / BUY PE ───────────────────────────────────────────────────────
     elif s in ("BUY CE", "BUY PE"):
@@ -2821,63 +3281,43 @@ def render_trade_signal(cache: dict, symbol: str):
                 <span>Max Profit:
                     <b style="color:#1b7a2e">&#8377;{sig.get('max_profit',0):,.0f}</b></span>
                 <span>{sig.get('timeframe','Intraday')} &nbsp;|&nbsp;
-                    VIX: {sig.get('vix',0):.1f} &nbsp;|&nbsp;
-                    IV Rank: {sig.get('iv_rank',0):.0f}%</span>
+                    Confluence: {sig.get('confluence','—')} &nbsp;|&nbsp;
+                    VIX: {sig.get('vix',0):.1f}</span>
                 <span style="color:#aab0c0">{levels_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
-        _render_factor_checklist(sig.get("factors", {}))
-
-        # ── OI Wall Map — human readable ──────────────────────────────────────
-        walls = sig.get("oi_walls", {})
-        if walls:
-            call_walls = walls.get("call_walls", [])
-            put_walls  = walls.get("put_walls",  [])
-            is_buy_ce  = (s == "BUY CE")
-
-            st.markdown("#### 📊 Market Structure — OI Walls")
-            col_r, col_s = st.columns(2)
-
-            with col_r:
-                st.markdown("**🧱 Resistance (Call Walls)**")
-                if call_walls:
+        if sig.get("is_expiry_day"):
+            st.error("⏰ EXPIRY DAY — Options premium decays fast. Use ATM only, small size, strict SL.")
+        if sig.get("time_warning"):
+            st.warning(sig["time_warning"])
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
+            # ── OI Wall Map ────────────────────────────────────────────────────
+            walls = sig.get("oi_walls", {})
+            if walls:
+                call_walls = walls.get("call_walls", [])
+                put_walls  = walls.get("put_walls",  [])
+                is_buy_ce  = (s == "BUY CE")
+                st.markdown("**📊 OI Walls**")
+                col_r, col_s = st.columns(2)
+                with col_r:
+                    st.markdown("**🧱 Resistance**")
                     for i, (strike, oi_l) in enumerate(call_walls):
                         bar_len   = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
-                        nearest   = (i == 0 and is_buy_ce)
-                        tag       = " ← ⚠️ NEAREST" if nearest else ""
-                        color_tag = "🔴" if nearest else "🟠"
-                        st.markdown(
-                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
-                        )
-                else:
-                    st.caption("Data loading...")
-
-            with col_s:
-                st.markdown("**🛡️ Support (Put Walls)**")
-                if put_walls:
+                        tag       = " ← ⚠️" if (i == 0 and is_buy_ce) else ""
+                        st.markdown(f"`{strike}` {'🔴' if (i==0 and is_buy_ce) else '🟠'} `{bar}` **{oi_l}L**{tag}")
+                with col_s:
+                    st.markdown("**🛡️ Support**")
                     for i, (strike, oi_l) in enumerate(put_walls):
                         bar_len   = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
-                        nearest   = (i == 0 and not is_buy_ce)
-                        tag       = " ← ⚠️ NEAREST" if nearest else ""
-                        color_tag = "🔴" if nearest else "🟢"
-                        st.markdown(
-                            f"`{strike}`&nbsp; {color_tag} `{bar}` &nbsp;**{oi_l}L**{tag}"
-                        )
-                else:
-                    st.caption("Data loading...")
-
-            # Plain language warning
-            warn = walls.get("ce_warning" if is_buy_ce else "pe_warning", "")
-            if warn:
-                penalty = walls.get("score_penalty", 0)
-                if penalty <= -15:
-                    st.error(warn)
-                elif penalty <= -8:
-                    st.warning(warn)
-                else:
-                    st.success(warn)
+                        tag       = " ← ⚠️" if (i == 0 and not is_buy_ce) else ""
+                        st.markdown(f"`{strike}` {'🔴' if (i==0 and not is_buy_ce) else '🟢'} `{bar}` **{oi_l}L**{tag}")
+                warn = walls.get("ce_warning" if is_buy_ce else "pe_warning", "")
+                if warn:
+                    penalty = walls.get("score_penalty", 0)
+                    (st.error if penalty <= -15 else st.warning if penalty <= -8 else st.success)(warn)
 
     # ── SELL — Iron Condor ────────────────────────────────────────────────────
     else:
@@ -2983,7 +3423,8 @@ def render_trade_signal(cache: dict, symbol: str):
                 <span>{levels_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
-        _render_factor_checklist(sig.get("factors", {}))
+        with st.expander("📊 Factor Analysis", expanded=False):
+            _render_factor_checklist(sig.get("factors", {}))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3084,21 +3525,14 @@ def live_data_section(symbol, expiry):
     except Exception as _ae:
         logger.error(f"Alert engine error: {_ae}")
 
-    # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
-    try:
-        collector = st.session_state.get("snap_collector")
-        if collector is not None:
-            sig_result = generate_trade_signal(cache, symbol)
-            collector.collect(cache, symbol, sig_result)
-    except Exception as _sc:
-        logger.error(f"Snapshot collect error: {_sc}")
+    # ── Compute primary signal once — reuse for snapshot + render (M-04) ────────
+    primary_sig = generate_trade_signal(cache, symbol)
 
     # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
     try:
         collector = st.session_state.get("snap_collector")
         if collector is not None:
-            sig_result = generate_trade_signal(cache, symbol)
-            collector.collect(cache, symbol, sig_result)
+            collector.collect(cache, symbol, primary_sig)
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
@@ -3108,14 +3542,23 @@ def live_data_section(symbol, expiry):
     # ── Recent Alerts Panel ──────────────────────────────────────────────────
     _render_alert_history()
 
-    # ── Market Overview ──────────────────────────────────────────────────────
-    st.markdown("### 🌐 Market Overview")
+    # ── Market Overview (compact strip) ──────────────────────────────────────
     render_market_overview(cache)
-    st.divider()
 
-    # ── TRADE SIGNAL — Sabse Important Panel ─────────────────────────────────
-    st.markdown("### 🎯 Trade Signal")
-    render_trade_signal(cache, symbol)
+    # ── TRADE SIGNALS — NIFTY + BANKNIFTY side by side ──────────────────────
+    other_sym   = cache.get("other_symbol", "BANKNIFTY" if symbol == "NIFTY" else "NIFTY")
+    other_cache = cache.get("other_cache", {})
+
+    col_sig1, col_sig2 = st.columns(2)
+    with col_sig1:
+        st.markdown(f"### 🎯 Trade Signal — {symbol}")
+        render_trade_signal(cache, symbol, precomputed=primary_sig)   # reuse — no extra call
+    with col_sig2:
+        st.markdown(f"### 🎯 Trade Signal — {other_sym}")
+        if other_cache:
+            render_trade_signal(other_cache, other_sym)
+        else:
+            st.info("⏳ Loading...")
     st.divider()
 
     # ── OI Chain | UOA ───────────────────────────────────────────────────────
@@ -3129,14 +3572,9 @@ def live_data_section(symbol, expiry):
 
     st.divider()
 
-    # ── PCR | IV ─────────────────────────────────────────────────────────────
-    col_pcr, col_iv = st.columns(2)
-    with col_pcr:
-        st.markdown("### 📉 PCR Readings")
-        render_pcr(cache)
-    with col_iv:
-        st.markdown("### 🎯 IV Rank · Greeks · Skew")
-        render_iv(cache)
+    # ── IV (PCR now shown in Market Overview) ─────────────────────────────────
+    st.markdown("### 🎯 IV Rank · Greeks · Skew")
+    render_iv(cache)
 
     st.divider()
 
@@ -3868,123 +4306,81 @@ def advanced_signals_section(symbol: str, expiry: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR (bahar hai — refresh se affect nahi hota)
 # ══════════════════════════════════════════════════════════════════════════════
-def render_sidebar() -> str:
+def render_topbar() -> str:
     """
-    Sidebar render karo — navigation + controls + status.
+    Sidebar hata ke top navigation bar — symbol + page dropdown + status.
     Returns: selected page name
     """
-    sb = st.sidebar
+    # Hide sidebar + toggle button completely
+    st.markdown("""<style>
+    [data-testid="stSidebar"]{display:none!important}
+    [data-testid="collapsedControl"]{display:none!important}
+    </style>""", unsafe_allow_html=True)
 
-    # ── Branding — Sensibull style ────────────────────────────────────────────
-    sb.markdown("""
-    <div style="padding:18px 12px 14px;">
-        <div style="display:flex;align-items:center;gap:10px">
-            <div style="background:#2962ff;border-radius:8px;width:32px;height:32px;
-                        display:flex;align-items:center;justify-content:center;
-                        font-size:18px;flex-shrink:0">📈</div>
-            <div>
-                <div style="font-size:14px;font-weight:700;color:#d1d4dc;
-                            letter-spacing:0.3px">NSE F&amp;O</div>
-                <div style="font-size:10px;color:#4a4f5e;margin-top:1px">
-                    Professional v2.2</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    c_brand, c_sym, c_nav, c_status = st.columns([1, 1, 2, 2.5])
 
-    sb.divider()
-
-    # ── Symbol selector ───────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:11px;color:#555;text-transform:uppercase;"
-                "letter-spacing:1px;margin-bottom:4px'>Symbol</div>",
-                unsafe_allow_html=True)
-    current = st.session_state.get("symbol", "NIFTY")
-    sym_options = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
-    new_sym = sb.selectbox(
-        "symbol_sel", sym_options,
-        index=sym_options.index(current),
-        label_visibility="collapsed"
-    )
-    if new_sym != current:
-        st.session_state["symbol"] = new_sym
-        st.rerun()
-
-    sb.divider()
-
-    # ── Navigation ────────────────────────────────────────────────────────────
-    # ── Navigation label ──────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
-                "letter-spacing:1px;padding:0 4px;margin-bottom:4px'>Menu</div>",
-                unsafe_allow_html=True)
-
-    pages = [
-        "📊  Live Dashboard",
-        "🧠  Advanced Signals",
-        "🧭  Trend Compass",
-        "🔬  Backtester",
-    ]
-    page = sb.radio("nav", pages, label_visibility="collapsed")
-
-    sb.divider()
-
-    # ── Today's P&L ───────────────────────────────────────────────────────────
-    sb.markdown("<div style='font-size:10px;color:#4a4f5e;text-transform:uppercase;"
-                "letter-spacing:1px;padding:0 4px;margin-bottom:6px'>Today</div>",
-                unsafe_allow_html=True)
-    try:
-        summary = st.session_state["trade_log"].get_daily_summary()
-        pnl     = summary.get("gross_pnl", 0)
-        pnl_col = "#26a69a" if pnl >= 0 else "#ef5350"
-        pnl_sym = "▲" if pnl >= 0 else "▼"
-        trades  = summary.get("total_trades", 0)
-        wr      = summary.get("win_rate", 0)
-        wins    = summary.get("win_trades", 0)
-        losses  = summary.get("loss_trades", 0)
-        sb.markdown(f"""
-        <div style="background:#eef2fb;border:1px solid #d0d8ee;border-radius:6px;
-                    padding:10px 12px;margin:0 0 4px">
-            <div style="font-size:11px;color:#8a96b0;margin-bottom:4px">P&amp;L</div>
-            <div style="font-size:20px;font-weight:600;color:{pnl_col}">
-                {pnl_sym} &#8377;{abs(pnl):,.0f}
-            </div>
-            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#8a96b0">
-                <span>Trades <b style="color:#3a4a6b">{trades}</b></span>
-                <span>W/L <b style="color:#00897b">{wins}</b>/<b style="color:#e53935">{losses}</b></span>
-                <span>WR <b style="color:{pnl_col}">{wr:.0f}%</b></span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    except Exception:
-        sb.markdown(
-            "<div style='color:#4a4f5e;font-size:11px;padding:8px 4px'>No trades today</div>",
+    with c_brand:
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:7px;padding:6px 0'>"
+            "<div style='background:#2962ff;border-radius:6px;width:26px;height:26px;"
+            "display:flex;align-items:center;justify-content:center;font-size:14px'>📈</div>"
+            "<span style='font-size:13px;font-weight:700;color:#1a1a2e'>NSE F&amp;O</span>"
+            "</div>",
             unsafe_allow_html=True
         )
 
-    sb.divider()
+    with c_sym:
+        current     = st.session_state.get("symbol", "NIFTY")
+        sym_options = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+        new_sym     = st.selectbox("sym", sym_options,
+                                   index=sym_options.index(current),
+                                   label_visibility="collapsed")
+        if new_sym != current:
+            st.session_state["symbol"] = new_sym
+            st.rerun()
 
-    # ── Market status ─────────────────────────────────────────────────────────
-    mkt        = get_market_status()
-    mkt_open   = (mkt == "OPEN")
-    dot_col    = "#26a69a" if mkt_open else ("#ffd740" if mkt == "PRE-OPEN" else "#ef5350")
-    now_str    = datetime.now().strftime("%H:%M:%S")
+    with c_nav:
+        pages = ["📊  Live Dashboard", "🧠  Advanced Signals",
+                 "🧭  Trend Compass",  "🔬  Backtester"]
+        page = st.selectbox("nav", pages, label_visibility="collapsed")
 
-    sb.markdown(f"""
-    <div style="padding:4px;display:flex;justify-content:space-between;align-items:center">
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-            <span style="width:6px;height:6px;border-radius:50%;
-                         background:{dot_col};display:inline-block"></span>
-            <span style="color:#5a6a8a">{mkt}</span>
-        </div>
-        <span style="font-size:11px;color:#b0b8cc">{now_str}</span>
-    </div>
-    """, unsafe_allow_html=True)
+    with c_status:
+        mkt     = get_market_status()
+        dot_col = "#26a69a" if mkt == "OPEN" else ("#ffd740" if mkt == "PRE-OPEN" else "#ef5350")
+        now_str = datetime.now().strftime("%H:%M:%S")
+        try:
+            summary  = st.session_state["trade_log"].get_daily_summary()
+            pnl      = summary.get("gross_pnl", 0)
+            pnl_col  = "#26a69a" if pnl >= 0 else "#ef5350"
+            pnl_sym  = "▲" if pnl >= 0 else "▼"
+            trades   = summary.get("total_trades", 0)
+            wr       = summary.get("win_rate", 0)
+            pnl_html = (
+                f"<span style='color:{pnl_col};font-weight:600;font-size:13px'>"
+                f"{pnl_sym} &#8377;{abs(pnl):,.0f}</span>"
+                f"&nbsp;<span style='color:#aab0c0;font-size:11px'>"
+                f"{trades}T &nbsp;WR {wr:.0f}%</span>"
+            )
+        except Exception:
+            pnl_html = "<span style='color:#aab0c0;font-size:11px'>No trades</span>"
 
-    sb.markdown(
-        "<div style='color:#c0c8d8;font-size:10px;text-align:center;"
-        "padding:6px 0 2px'>Live Data · Auto-refresh 60s</div>",
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:10px;padding:6px 0'>"
+            f"{pnl_html}"
+            f"<span style='color:#e0e4ef'>|</span>"
+            f"<span style='display:flex;align-items:center;gap:5px'>"
+            f"<span style='width:7px;height:7px;border-radius:50%;background:{dot_col};"
+            f"display:inline-block'></span>"
+            f"<span style='color:#5a6a8a;font-size:12px'>{mkt}</span>"
+            f"&nbsp;<span style='color:#b0b8cc;font-size:11px'>{now_str}</span>"
+            f"</span></div>",
+            unsafe_allow_html=True
+        )
+
+    st.markdown(
+        "<hr style='margin:4px 0 12px;border:none;border-top:1px solid #e0e4ef'>",
         unsafe_allow_html=True
     )
-
     return page
 
 
@@ -4468,8 +4864,8 @@ def main():
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
 
-    # ── Sidebar navigation ────────────────────────────────────────────────────
-    page = render_sidebar()
+    # ── Top navigation bar (sidebar hata diya) ───────────────────────────────
+    page = render_topbar()
 
     # ── Page routing ──────────────────────────────────────────────────────────
     if "Live Dashboard" in page:
