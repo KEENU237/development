@@ -169,11 +169,50 @@ def is_market_open() -> bool:
     return (_OPEN_H, _OPEN_M) <= t < (_CLOSE_H, _CLOSE_M)
 
 
+# NSE trading holidays — update each year. Format: "YYYY-MM-DD"
+_NSE_HOLIDAYS: set = {
+    # 2025
+    "2025-01-26",  # Republic Day
+    "2025-02-26",  # Mahashivratri
+    "2025-03-14",  # Holi
+    "2025-03-31",  # Id-Ul-Fitr (Ramadan Eid)
+    "2025-04-10",  # Shri Ram Navami
+    "2025-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+    "2025-04-18",  # Good Friday
+    "2025-05-01",  # Maharashtra Day
+    "2025-08-15",  # Independence Day
+    "2025-08-27",  # Ganesh Chaturthi
+    "2025-10-02",  # Gandhi Jayanti
+    "2025-10-02",  # Dussehra
+    "2025-10-21",  # Diwali Laxmi Pujan (Muhurat trading day — separate)
+    "2025-10-22",  # Diwali Balipratipada
+    "2025-11-05",  # Prakash Gurpurb Sri Guru Nanak Dev Ji
+    "2025-12-25",  # Christmas
+    # 2026
+    "2026-01-26",  # Republic Day
+    "2026-03-03",  # Mahashivratri
+    "2026-03-20",  # Holi
+    "2026-03-30",  # Id-Ul-Fitr
+    "2026-04-03",  # Good Friday
+    "2026-04-14",  # Dr. B.R. Ambedkar Jayanti
+    "2026-04-30",  # Ram Navami
+    "2026-05-01",  # Maharashtra Day
+    "2026-08-15",  # Independence Day
+    "2026-08-17",  # Ganesh Chaturthi
+    "2026-10-02",  # Gandhi Jayanti
+    "2026-10-29",  # Diwali
+    "2026-12-25",  # Christmas
+}
+
+
 def get_market_status() -> str:
-    """Returns 'OPEN', 'PRE-OPEN', 'CLOSED', or 'WEEKEND'."""
+    """Returns 'OPEN', 'PRE-OPEN', 'CLOSED', 'HOLIDAY', or 'WEEKEND'."""
     now = datetime.now()
     if now.weekday() >= 5:
         return "WEEKEND"
+    today_str = now.strftime("%Y-%m-%d")
+    if today_str in _NSE_HOLIDAYS:
+        return "HOLIDAY"
     h, m = now.hour, now.minute
     if (h, m) < (9, 0):
         return "CLOSED"

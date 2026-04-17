@@ -38,8 +38,8 @@ class BacktestConfig:
     to_date:             str   = ""
 
     # Signal filters
-    min_score:           int   = 30     # Minimum confidence score
-    max_vix:             float = 20.0   # Skip if VIX above this
+    min_score:           int   = 35     # Matches live full-data threshold (was 30)
+    max_vix:             float = 20.0   # Skip BUY CE/PE if VIX above this (Iron Condor allowed)
     min_pcr_bull:        float = 1.2    # Min PCR for BUY CE
     max_pcr_bear:        float = 0.8    # Max PCR for BUY PE
 
@@ -260,15 +260,16 @@ class BacktestEngine:
             pcr     = float(snap.get("pcr",   0))
             iv_rank = float(snap.get("iv_rank", 50))
 
-            if signal not in ("BUY CE", "BUY PE"):
+            if signal not in ("BUY CE", "BUY PE", "SELL — Iron Condor"):
                 continue
             if score < config.min_score:
                 continue
-            if vix > config.max_vix:
+            # VIX filter only blocks directional trades — Iron Condor is designed for high VIX
+            if signal in ("BUY CE", "BUY PE") and vix > config.max_vix:
                 continue
             if signal == "BUY CE" and pcr < config.min_pcr_bull:
                 continue
-            if signal == "BUY PE" and pcr >= config.max_pcr_bear:   # fix: >= not >
+            if signal == "BUY PE" and pcr >= config.max_pcr_bear:
                 continue
 
             # Entry price from snapshot + slippage
