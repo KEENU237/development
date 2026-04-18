@@ -356,10 +356,21 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
             logger.error(f"Other MaxPain ({other_symbol}): {exc}")
             return None
 
+    def _fetch_other_vp():
+        """Other symbol ki Volume Profile — dual panel VP ke liye."""
+        try:
+            candles = kite.get_vp_candles(other_symbol, vp_session)
+            result  = _calc_volume_profile(other_symbol, candles)
+            result["session"] = vp_session
+            return result
+        except Exception as exc:
+            logger.error(f"Other VP fetch ({other_symbol}): {exc}")
+            return {}
+
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         f_prices      = ex.submit(_fetch_prices)
         f_oi          = ex.submit(_fetch_oi_chain)
         f_mp          = ex.submit(_fetch_max_pain)
@@ -370,6 +381,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
         f_vp          = ex.submit(_fetch_vp)
         f_other_oi    = ex.submit(_fetch_other_oi_chain)
         f_other_mp    = ex.submit(_fetch_other_max_pain)
+        f_other_vp    = ex.submit(_fetch_other_vp)
 
     # ── Collect results (timeout se kabhi hang nahi hoga) ────────────────────
     def _safe(fut, default, timeout=TIMEOUT):
@@ -429,7 +441,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
         "mp_result": cache["other_mp_result"],
         "pcr_data":  cache["pcr_data"],
         "iv_data":   {},   # no extra API calls; GEX will use VIX fallback
-        "vp_data":   {},
+        "vp_data":   _safe(f_other_vp, {}),
         "expiry":    cache["other_expiry"],
     }
     try:
@@ -2265,7 +2277,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         _exp_date = None
         for _fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%B-%Y", "%d%b%Y", "%d%B%Y", "%Y/%m/%d"):
             try:
-                _exp_date = _dt.datetime.strptime(expiry_str.upper(), _fmt.upper()).date()
+                _exp_date = _dt.datetime.strptime(expiry_str.strip(), _fmt).date()
                 break
             except ValueError:
                 continue
@@ -2362,9 +2374,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                     factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f}",
                                            "PE OI building — likely bearish (CE LTP unavailable)", "#ff6d00")
                 else:
-                    atm_build = "FS"; score -= 10; bear_count += 1
-                    factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,}",
-                                           "PE OI building — Bearish", "#ff6d00")
+                    # No LTP data — can't determine direction (same as CE case)
+                    factors["OI Build"] = ("⚪", f"PE OI +{pe_chg:,}",
+                                           "PE OI up but no LTP data — inconclusive", "#888")
 
             elif ce_chg < -oi_threshold:
                 atm_build = "LU"; score -= 10; bear_count += 1
@@ -2453,7 +2465,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             else:
                 factors["GEX"] = ("⚠️", f"{gex_total:+.1f}Cr", "Trending but GEX opposes signal — reduce size", "#ffd740")
         else:
-            factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — but signal too weak to amplify", "#69f0ae")
+            factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Trending — but signal too weak to amplify", "#888")
     else:
         factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Neutral GEX — No strong push", "#888")
 
@@ -2558,8 +2570,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         confluence_msg = f"0/{_total_factors}"
 
     # ── Expiry Day — no buying ─────────────────────────────────────────────────
-    if is_expiry_day and not sell_mode:
-        sell_mode = True
+    if is_expiry_day:
+        sell_mode   = True
+        block_buying = True   # expiry = theta crush — block directional buying regardless of iv_rank
         factors["⏰ Expiry"] = ("⚠️", "TODAY IS EXPIRY",
                                 "DO NOT buy options — theta crushes fast. Only sell.", "#ff6d00")
 
@@ -2684,6 +2697,15 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     # Triggers when score is modest (not strong enough for directional) but
     # selling conditions are favourable.  Has its own lower threshold = 15.
     # strong_directional flag ensures condor doesn't override a clear BUY CE/PE.
+    #
+    # DATA QUALITY GATE: Iron Condor requires real OI + market data.
+    # Without OI chain, strike selection falls back to dummy atm±4*step levels.
+    # Without PCR/MaxPain, we have no confirmation of range-bound sentiment.
+    # Firing Iron Condor on partial/failed API data = fabricated signal.
+    _ic_data_ok = (
+        bool(oi_chain)                          # real OI data loaded
+        and (bool(pcr_data.get(symbol)) or bool(mp_result))  # PCR or MaxPain
+    )
     CONDOR_MIN_SCORE = 15
     _strong_directional = (
         abs_score >= _need_score
@@ -2691,7 +2713,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         and not range_bound_block
         and not block_buying
     )
-    if sell_mode and iv_rank > 50 and abs_score >= CONDOR_MIN_SCORE and not _strong_directional:
+    if sell_mode and iv_rank > 50 and abs_score >= CONDOR_MIN_SCORE and not _strong_directional and _ic_data_ok:
         return _iron_condor_signal()
 
     # ── NO TRADE — insufficient score or confluence for directional ───────────
@@ -2710,6 +2732,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "build":         atm_build,
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
         }
 
     # ── NO TRADE — directional blocked by risk guards ─────────────────────────
@@ -2728,6 +2751,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "build":         atm_build,
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
         }
 
     # ── BUY CE ────────────────────────────────────────────────────────────────
@@ -2737,7 +2761,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             return {"signal": "NO TRADE", "reason": strike_reason,
                     "score": abs_score, "factors": factors,
                     "vix": vix, "pcr": pcr_value, "build": atm_build,
-                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day,
+                    "oi_walls": oi_walls}
         entry    = max(entry, 15)        # L-01: absolute floor
         target   = round(entry * gain_mult)
         sl       = round(entry * sl_mult)
@@ -2780,7 +2805,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             return {"signal": "NO TRADE", "reason": strike_reason,
                     "score": abs_score, "factors": factors,
                     "vix": vix, "pcr": pcr_value, "build": atm_build,
-                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day,
+                    "oi_walls": oi_walls}
         entry    = max(entry, 15)        # L-01: absolute floor
         target   = round(entry * gain_mult)
         sl       = round(entry * sl_mult)
@@ -2822,7 +2848,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         return _iron_condor_signal()
 
     return {"signal": "NO TRADE", "reason": "Inconclusive after all checks",
-            "score": abs_score, "confluence": confluence_msg, "factors": factors}
+            "score": abs_score, "confluence": confluence_msg, "factors": factors,
+            "oi_walls": oi_walls}
 
 
 def render_volume_profile(cache: dict, symbol: str):
@@ -3130,7 +3157,7 @@ def _render_factor_checklist(factors: dict):
             f'width:80px;flex-shrink:0">{name}</span>'
             f'<span style="background:{badge_bg};color:{badge_txt};font-size:11px;'
             f'font-weight:600;padding:3px 10px;border-radius:20px;flex-shrink:0">{val}</span>'
-            f'<span style="font-size:11px;color:#aab0c0">{desc}</span>'
+            f'<span style="font-size:11px;color:#aab0c0;flex:1;min-width:0;overflow-wrap:break-word">{desc}</span>'
             f'</div>'
         )
 
@@ -3204,6 +3231,24 @@ def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
             st.warning(sig["time_warning"])
         with st.expander("📊 Factor Analysis", expanded=False):
             _render_factor_checklist(sig.get("factors", {}))
+            walls = sig.get("oi_walls", {})
+            if walls:
+                call_walls = walls.get("call_walls", [])
+                put_walls  = walls.get("put_walls",  [])
+                st.markdown("**📊 OI Walls**")
+                col_r, col_s = st.columns(2)
+                with col_r:
+                    st.markdown("**🧱 Resistance**")
+                    for i, (strike, oi_l) in enumerate(call_walls):
+                        bar_len = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
+                        bar = "█" * bar_len + "░" * (10 - bar_len)
+                        st.markdown(f"`{strike}` 🟠 `{bar}` **{oi_l}L**")
+                with col_s:
+                    st.markdown("**🛡️ Support**")
+                    for i, (strike, oi_l) in enumerate(put_walls):
+                        bar_len = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
+                        bar = "█" * bar_len + "░" * (10 - bar_len)
+                        st.markdown(f"`{strike}` 🟢 `{bar}` **{oi_l}L**")
 
     # ── BUY CE / BUY PE ───────────────────────────────────────────────────────
     elif s in ("BUY CE", "BUY PE"):
