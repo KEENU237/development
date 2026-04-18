@@ -271,14 +271,23 @@ class SnapshotCollector:
             saved = self.db.save_snapshot(snap)
             if saved:
                 self._last_slot[symbol] = slot
-                if signal_result.get("signal") in ("BUY CE", "BUY PE"):
+                sig_type = signal_result.get("signal", "")
+                if sig_type in ("BUY CE", "BUY PE", "SELL — Iron Condor"):
+                    entry = signal_result.get("entry", 0)
+                    if sig_type == "SELL — Iron Condor":
+                        entry   = signal_result.get("total_prem", 0)
+                        ic_tgt  = round(entry * 0.5, 1)   # target = 50% premium decay
+                        ic_sl   = signal_result.get("sl_premium", round(entry * 1.5, 1))
+                    else:
+                        ic_tgt = signal_result.get("target", 0)
+                        ic_sl  = signal_result.get("sl",     0)
                     self.db.save_signal({
                         "symbol":      symbol,
-                        "signal":      signal_result["signal"],
+                        "signal":      sig_type,
                         "score":       signal_result.get("score",  0),
-                        "entry_price": signal_result.get("entry",  0),
-                        "target":      signal_result.get("target", 0),
-                        "sl":          signal_result.get("sl",     0),
+                        "entry_price": entry,
+                        "target":      ic_tgt,
+                        "sl":          ic_sl,
                         "strike":      signal_result.get("strike", snap["atm"]),
                         "vix":         snap["vix"],
                         "pcr":         snap["pcr"],
@@ -318,8 +327,8 @@ class SnapshotCollector:
         total_ce_vol = total_pe_vol = 0
 
         for row in oi_chain:
-            # ATM ltp
-            if abs(row.strike - atm) <= step and atm_ce == 0.0:
+            # ATM ltp — exact match only (avoids picking wrong strike LTP)
+            if int(row.strike) == atm:
                 atm_ce = row.ce_ltp or 0
                 atm_pe = row.pe_ltp or 0
             # Sum totals
