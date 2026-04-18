@@ -2277,7 +2277,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         _exp_date = None
         for _fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%B-%Y", "%d%b%Y", "%d%B%Y", "%Y/%m/%d"):
             try:
-                _exp_date = _dt.datetime.strptime(expiry_str.upper(), _fmt.upper()).date()
+                _exp_date = _dt.datetime.strptime(expiry_str.strip(), _fmt).date()
                 break
             except ValueError:
                 continue
@@ -2465,7 +2465,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             else:
                 factors["GEX"] = ("⚠️", f"{gex_total:+.1f}Cr", "Trending but GEX opposes signal — reduce size", "#ffd740")
         else:
-            factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr", "Trending — but signal too weak to amplify", "#69f0ae")
+            factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Trending — but signal too weak to amplify", "#888")
     else:
         factors["GEX"] = ("⚪", f"{gex_total:+.1f}Cr", "Neutral GEX — No strong push", "#888")
 
@@ -2732,6 +2732,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "build":         atm_build,
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
         }
 
     # ── NO TRADE — directional blocked by risk guards ─────────────────────────
@@ -2750,6 +2751,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "build":         atm_build,
             "time_warning":  time_warning,
             "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
         }
 
     # ── BUY CE ────────────────────────────────────────────────────────────────
@@ -2759,7 +2761,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             return {"signal": "NO TRADE", "reason": strike_reason,
                     "score": abs_score, "factors": factors,
                     "vix": vix, "pcr": pcr_value, "build": atm_build,
-                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day,
+                    "oi_walls": oi_walls}
         entry    = max(entry, 15)        # L-01: absolute floor
         target   = round(entry * gain_mult)
         sl       = round(entry * sl_mult)
@@ -2802,7 +2805,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             return {"signal": "NO TRADE", "reason": strike_reason,
                     "score": abs_score, "factors": factors,
                     "vix": vix, "pcr": pcr_value, "build": atm_build,
-                    "time_warning": time_warning, "is_expiry_day": is_expiry_day}
+                    "time_warning": time_warning, "is_expiry_day": is_expiry_day,
+                    "oi_walls": oi_walls}
         entry    = max(entry, 15)        # L-01: absolute floor
         target   = round(entry * gain_mult)
         sl       = round(entry * sl_mult)
@@ -2844,7 +2848,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         return _iron_condor_signal()
 
     return {"signal": "NO TRADE", "reason": "Inconclusive after all checks",
-            "score": abs_score, "confluence": confluence_msg, "factors": factors}
+            "score": abs_score, "confluence": confluence_msg, "factors": factors,
+            "oi_walls": oi_walls}
 
 
 def render_volume_profile(cache: dict, symbol: str):
@@ -3152,7 +3157,7 @@ def _render_factor_checklist(factors: dict):
             f'width:80px;flex-shrink:0">{name}</span>'
             f'<span style="background:{badge_bg};color:{badge_txt};font-size:11px;'
             f'font-weight:600;padding:3px 10px;border-radius:20px;flex-shrink:0">{val}</span>'
-            f'<span style="font-size:11px;color:#aab0c0">{desc}</span>'
+            f'<span style="font-size:11px;color:#aab0c0;flex:1;min-width:0;overflow-wrap:break-word">{desc}</span>'
             f'</div>'
         )
 
@@ -3226,6 +3231,24 @@ def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
             st.warning(sig["time_warning"])
         with st.expander("📊 Factor Analysis", expanded=False):
             _render_factor_checklist(sig.get("factors", {}))
+            walls = sig.get("oi_walls", {})
+            if walls:
+                call_walls = walls.get("call_walls", [])
+                put_walls  = walls.get("put_walls",  [])
+                st.markdown("**📊 OI Walls**")
+                col_r, col_s = st.columns(2)
+                with col_r:
+                    st.markdown("**🧱 Resistance**")
+                    for i, (strike, oi_l) in enumerate(call_walls):
+                        bar_len = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
+                        bar = "█" * bar_len + "░" * (10 - bar_len)
+                        st.markdown(f"`{strike}` 🟠 `{bar}` **{oi_l}L**")
+                with col_s:
+                    st.markdown("**🛡️ Support**")
+                    for i, (strike, oi_l) in enumerate(put_walls):
+                        bar_len = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
+                        bar = "█" * bar_len + "░" * (10 - bar_len)
+                        st.markdown(f"`{strike}` 🟢 `{bar}` **{oi_l}L**")
 
     # ── BUY CE / BUY PE ───────────────────────────────────────────────────────
     elif s in ("BUY CE", "BUY PE"):

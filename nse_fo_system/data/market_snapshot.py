@@ -275,14 +275,19 @@ class SnapshotCollector:
                 if sig_type in ("BUY CE", "BUY PE", "SELL — Iron Condor"):
                     entry = signal_result.get("entry", 0)
                     if sig_type == "SELL — Iron Condor":
-                        entry = signal_result.get("total_prem", 0)
+                        entry   = signal_result.get("total_prem", 0)
+                        ic_tgt  = round(entry * 0.5, 1)   # target = 50% premium decay
+                        ic_sl   = signal_result.get("sl_premium", round(entry * 1.5, 1))
+                    else:
+                        ic_tgt = signal_result.get("target", 0)
+                        ic_sl  = signal_result.get("sl",     0)
                     self.db.save_signal({
                         "symbol":      symbol,
                         "signal":      sig_type,
                         "score":       signal_result.get("score",  0),
                         "entry_price": entry,
-                        "target":      signal_result.get("target", signal_result.get("sl_premium", 0)),
-                        "sl":          signal_result.get("sl",     signal_result.get("sl_premium", 0)),
+                        "target":      ic_tgt,
+                        "sl":          ic_sl,
                         "strike":      signal_result.get("strike", snap["atm"]),
                         "vix":         snap["vix"],
                         "pcr":         snap["pcr"],
