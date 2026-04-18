@@ -370,7 +370,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         f_prices      = ex.submit(_fetch_prices)
         f_oi          = ex.submit(_fetch_oi_chain)
         f_mp          = ex.submit(_fetch_max_pain)
@@ -2697,6 +2697,15 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     # Triggers when score is modest (not strong enough for directional) but
     # selling conditions are favourable.  Has its own lower threshold = 15.
     # strong_directional flag ensures condor doesn't override a clear BUY CE/PE.
+    #
+    # DATA QUALITY GATE: Iron Condor requires real OI + market data.
+    # Without OI chain, strike selection falls back to dummy atm±4*step levels.
+    # Without PCR/MaxPain, we have no confirmation of range-bound sentiment.
+    # Firing Iron Condor on partial/failed API data = fabricated signal.
+    _ic_data_ok = (
+        bool(oi_chain)                          # real OI data loaded
+        and (bool(pcr_data.get(symbol)) or bool(mp_result))  # PCR or MaxPain
+    )
     CONDOR_MIN_SCORE = 15
     _strong_directional = (
         abs_score >= _need_score
@@ -2704,7 +2713,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         and not range_bound_block
         and not block_buying
     )
-    if sell_mode and iv_rank > 50 and abs_score >= CONDOR_MIN_SCORE and not _strong_directional:
+    if sell_mode and iv_rank > 50 and abs_score >= CONDOR_MIN_SCORE and not _strong_directional and _ic_data_ok:
         return _iron_condor_signal()
 
     # ── NO TRADE — insufficient score or confluence for directional ───────────
