@@ -3592,6 +3592,14 @@ def live_data_section(symbol, expiry):
     # ── Compute primary signal once — reuse for snapshot + render (M-04) ────────
     primary_sig = generate_trade_signal(cache, symbol)
 
+    # ── Trade Signal Telegram Alert ───────────────────────────────────────────
+    try:
+        _eng = st.session_state.get("alert_engine")
+        if _eng is not None:
+            _eng.send_trade_signal(primary_sig)
+    except Exception as _te:
+        logger.error(f"Trade signal alert error: {_te}")
+
     # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
     try:
         collector = st.session_state.get("snap_collector")
