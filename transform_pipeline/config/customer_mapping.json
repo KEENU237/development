@@ -1,0 +1,133 @@
+{
+  "source_system": "CUSTOMER_MASTER",
+  "file_format": "CSV",
+  "delimiter": ",",
+  "encoding": "utf-8",
+  "has_header": true,
+  "target_table": "CUSTOMER_DIM",
+
+  "field_mappings": [
+    {
+      "source": "cust_id",
+      "target": "CUSTOMER_ID",
+      "source_type": "string",
+      "target_type": "integer",
+      "nullable": false,
+      "default": null,
+      "rules": []
+    },
+    {
+      "source": "FIRST_NM",
+      "target": "FIRST_NAME",
+      "source_type": "string",
+      "target_type": "string",
+      "nullable": true,
+      "default": null,
+      "rules": ["trim", "proper_case"]
+    },
+    {
+      "source": "last_nm",
+      "target": "LAST_NAME",
+      "source_type": "string",
+      "target_type": "string",
+      "nullable": false,
+      "default": null,
+      "rules": ["trim", "proper_case"]
+    },
+    {
+      "source": "DOB",
+      "target": "DATE_OF_BIRTH",
+      "source_type": "string",
+      "target_type": "date",
+      "nullable": true,
+      "default": null,
+      "rules": ["reformat_date_dmy"]
+    },
+    {
+      "source": "GENDER",
+      "target": "GENDER_CODE",
+      "source_type": "string",
+      "target_type": "string",
+      "nullable": false,
+      "default": "UNKNOWN",
+      "rules": ["map_gender"]
+    },
+    {
+      "source": "mobile",
+      "target": "MOBILE_NUMBER",
+      "source_type": "string",
+      "target_type": "string",
+      "nullable": true,
+      "default": null,
+      "rules": ["trim", "validate_mobile_10"]
+    },
+    {
+      "source": "annual_inc",
+      "target": "ANNUAL_INCOME",
+      "source_type": "string",
+      "target_type": "decimal",
+      "nullable": true,
+      "default": null,
+      "rules": ["non_negative"]
+    },
+    {
+      "source": "status",
+      "target": "STATUS_CODE",
+      "source_type": "string",
+      "target_type": "string",
+      "nullable": false,
+      "default": null,
+      "rules": ["map_status"]
+    }
+  ],
+
+  "derived_fields": [
+    {
+      "target": "AGE",
+      "target_type": "integer",
+      "derive_from": "DATE_OF_BIRTH",
+      "rule": "calculate_age"
+    },
+    {
+      "target": "LOAD_TS",
+      "target_type": "datetime",
+      "derive_from": null,
+      "rule": "current_utc_ts"
+    },
+    {
+      "target": "SOURCE_SYSTEM",
+      "target_type": "string",
+      "derive_from": null,
+      "rule": "static:CUSTOMER_MASTER"
+    },
+    {
+      "target": "SOURCE_FILE_NAME",
+      "target_type": "string",
+      "derive_from": null,
+      "rule": "inject:file_name"
+    },
+    {
+      "target": "BATCH_ID",
+      "target_type": "string",
+      "derive_from": null,
+      "rule": "inject:batch_id"
+    },
+    {
+      "target": "ROW_HASH",
+      "target_type": "string",
+      "derive_from": ["CUSTOMER_ID", "DATE_OF_BIRTH", "STATUS_CODE"],
+      "rule": "sha256_hash"
+    }
+  ],
+
+  "validation_rules": [
+    { "field": "CUSTOMER_ID",  "check": "not_null",  "action": "reject" },
+    { "field": "CUSTOMER_ID",  "check": "is_integer", "action": "reject" },
+    { "field": "LAST_NAME",    "check": "not_null",  "action": "reject" },
+    { "field": "STATUS_CODE",  "check": "not_null",  "action": "reject" },
+    { "field": "GENDER_CODE",  "check": "in_list",   "values": ["MALE","FEMALE","UNKNOWN"], "action": "reject" },
+    { "field": "STATUS_CODE",  "check": "in_list",   "values": ["ACTIVE","INACTIVE"],       "action": "reject" },
+    { "field": "ANNUAL_INCOME","check": "min_value", "value": 0, "action": "warn" },
+    { "field": "FIRST_NAME",   "check": "not_null",  "action": "warn" }
+  ]
+}
