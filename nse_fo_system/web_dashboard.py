@@ -3614,14 +3614,16 @@ def live_data_section(symbol, expiry):
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
-    # ── UOA Alerts — DB mein save karo (naye alerts only) ────────────────────
+    # ── UOA Alerts — DB save + Telegram alert ────────────────────────────────
     try:
-        _snap_db = st.session_state.get("snap_db")
-        if _snap_db is not None:
-            for _uoa in cache.get("uoa_alerts", []):
-                _snap_db.save_uoa_alert(_uoa)
+        _snap_db  = st.session_state.get("snap_db")
+        _uoa_eng  = st.session_state.get("alert_engine")
+        for _uoa in cache.get("uoa_alerts", []):
+            _is_new = _snap_db.save_uoa_alert(_uoa) if _snap_db else False
+            if _is_new and _uoa_eng is not None:
+                _uoa_eng.send_uoa_alert(_uoa)
     except Exception as _ue:
-        logger.error(f"UOA save error: {_ue}")
+        logger.error(f"UOA save/alert error: {_ue}")
 
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)

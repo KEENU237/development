@@ -491,6 +491,54 @@ class AlertEngine:
             return True
         return False
 
+    def send_uoa_alert(self, alert) -> bool:
+        """
+        UOA alert aane pe Telegram bhejo — NIFTY aur BANKNIFTY dono ke liye.
+        Same strike 30 min tak dobara nahi bhejega.
+        Returns True if alert was sent.
+        """
+        sig_key = f"UOA_{alert.symbol}_{alert.opt_type}_{int(alert.strike)}"
+        if self._in_cooldown(sig_key):
+            return False
+
+        is_bull   = "BULL" in alert.sentiment
+        dir_emoji = "📈" if is_bull else "📉"
+        fire_tag  = " 🔥 FIRE" if alert.is_fire else ""
+        mult_tag  = f"{alert.mult:.1f}x{fire_tag}"
+        sentiment = alert.sentiment.replace("_", " ")
+
+        depth_line = f"\nITM Depth: {alert.itm_depth_pct:.1f}%" if alert.itm_depth_pct > 0 else ""
+        spot_line  = f"\nSpot     : ₹{alert.spot_at_alert:,.0f}" if alert.spot_at_alert > 0 else ""
+
+        detail = (
+            f"Symbol   : {alert.symbol}\n"
+            f"Strike   : {int(alert.strike)} {alert.opt_type}\n"
+            f"Volume   : {mult_tag} avg se zyada\n"
+            f"Sentiment: {dir_emoji} {sentiment}"
+            f"{depth_line}{spot_line}"
+        )
+        action = (
+            f"Dashboard pe UOA panel dekho.\n"
+            f"PCR + GEX se confirm karo phir trade lo."
+        )
+        title = f"{dir_emoji} UOA — {alert.symbol} {int(alert.strike)} {alert.opt_type} ({mult_tag})"
+
+        tg_alert = TriggerAlert(
+            time=datetime.now().strftime("%H:%M"),
+            category="URGENT" if alert.is_fire else "IMPORTANT",
+            signal_key=sig_key,
+            title=title,
+            detail=detail,
+            action=action,
+            score=3 if alert.is_fire else 2,
+        )
+        self._mark_sent(sig_key)
+        if self.enabled and self.bot_token and self.chat_id:
+            self._send_telegram(tg_alert)
+            logger.info(f"UOA Telegram sent: {alert.symbol} {int(alert.strike)} {alert.opt_type} {alert.mult:.1f}x")
+            return True
+        return False
+
     # ── Cooldown helpers ──────────────────────────────────────────────────────
 
     def _in_cooldown(self, signal_key: str) -> bool:
