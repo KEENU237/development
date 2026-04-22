@@ -2427,11 +2427,13 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     if iv_rank > 70:
         if vix > 20: sell_mode = True   # block buying only when VIX also elevated
         if vix > 20: score -= 5; bear_count += 1   # penalise direction only in expensive+volatile env
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Very expensive — Strong sell signal", "#ff6d00")
+        _iv_desc = "Very expensive + VIX high — sell premium, avoid buying" if vix > 20 else "Very expensive IV — but VIX low, buying not blocked"
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", _iv_desc, "#ff6d00")
     elif iv_rank > 55:
         if vix > 20: sell_mode = True
         if vix > 20: score -= 3; bear_count += 1
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Elevated IV — Premium selling favoured", "#ffd740")
+        _iv_desc2 = "Elevated IV + VIX high — premium selling favoured" if vix > 20 else "Elevated IV — VIX low, buying still ok"
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", _iv_desc2, "#ffd740")
     elif iv_rank < 20:
         score += 10; bull_count += 1
         factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Very cheap — Buy options now", "#00c853")
@@ -2686,6 +2688,10 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             if int(row.strike) == sell_pe: pe_prem = row.pe_ltp or 0
 
         total_prem   = ce_prem + pe_prem
+        if total_prem < 1:
+            return {"signal": "NO TRADE", "reason": "Iron Condor — LTP unavailable for selected strikes",
+                    "score": abs_score, "factors": factors, "vix": vix, "pcr": 0, "iv_rank": iv_rank,
+                    "confluence": confluence_msg, "oi_walls": oi_walls}
         max_profit_r = round(total_prem * lot)
         sl_premium   = round(total_prem * 1.5)
         return {
@@ -3607,6 +3613,15 @@ def live_data_section(symbol, expiry):
             collector.collect(cache, symbol, primary_sig)
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
+
+    # ── UOA Alerts — DB mein save karo (naye alerts only) ────────────────────
+    try:
+        _snap_db = st.session_state.get("snap_db")
+        if _snap_db is not None:
+            for _uoa in cache.get("uoa_alerts", []):
+                _snap_db.save_uoa_alert(_uoa)
+    except Exception as _ue:
+        logger.error(f"UOA save error: {_ue}")
 
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)
