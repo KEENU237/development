@@ -2425,11 +2425,15 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     # ── 5. IV Rank (±10) ─────────────────────────────────────────────────────
     iv_rank = iv_data.get("iv_rank", 50)
     if iv_rank > 70:
-        sell_mode = True; score -= 5; bear_count += 1   # fix: was missing bear_count
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Very expensive — Strong sell signal", "#ff6d00")
+        if vix > 20: sell_mode = True   # block buying only when VIX also elevated
+        if vix > 20: score -= 5; bear_count += 1   # penalise direction only in expensive+volatile env
+        _iv_desc = "Very expensive + VIX high — sell premium, avoid buying" if vix > 20 else "Very expensive IV — but VIX low, buying not blocked"
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", _iv_desc, "#ff6d00")
     elif iv_rank > 55:
-        sell_mode = True; score -= 3; bear_count += 1
-        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", "Elevated IV — Premium selling favoured", "#ffd740")
+        if vix > 20: sell_mode = True
+        if vix > 20: score -= 3; bear_count += 1
+        _iv_desc2 = "Elevated IV + VIX high — premium selling favoured" if vix > 20 else "Elevated IV — VIX low, buying still ok"
+        factors["IV Rank"] = ("⚠️", f"{iv_rank:.0f}%", _iv_desc2, "#ffd740")
     elif iv_rank < 20:
         score += 10; bull_count += 1
         factors["IV Rank"] = ("✅", f"{iv_rank:.0f}%", "Very cheap — Buy options now", "#00c853")
@@ -2451,11 +2455,20 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         factors["GEX"] = ("📦", f"{gex_total:+.1f}Cr",
                           "RANGE BOUND — MM suppressing moves. BUY CE/PE blocked.", "#ff6d00")
     elif gex_regime == "VOLATILE / TRENDING":
-        # Only amplify if: direction established (|score| ≥ 15) AND gex_total sign confirms it.
         # gex_total > 0 → MMs long gamma (bullish tilt), < 0 → short gamma (bearish tilt).
-        if abs(score) >= 15:
-            gex_dir   = 1 if gex_total >= 0 else -1
-            score_dir = 1 if score > 0     else -1
+        _gex_abs  = abs(gex_total)
+        score_dir = 1 if score >= 0 else -1
+        gex_dir   = 1 if gex_total >= 0 else -1
+        if _gex_abs >= 300 and score != 0:
+            # Very strong GEX — amplify in whatever direction other factors indicate.
+            # At this magnitude MMs are forced to hedge → price moves HARD in signal direction.
+            bonus = score_dir * (15 if _gex_abs >= 400 else 10)
+            score += bonus
+            if bonus > 0: bull_count += 1
+            else:         bear_count += 1
+            factors["GEX"] = ("✅", f"{gex_total:+.1f}Cr",
+                              f"Strong GEX momentum ({_gex_abs:.0f}Cr) — amplifying signal", "#00c853")
+        elif abs(score) >= 15:
             if gex_dir == score_dir:
                 bonus = gex_dir * 10
                 score += bonus
@@ -2514,6 +2527,11 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     if oi_walls:
         if score > 0:
             ce_pen  = oi_walls.get("ce_score_penalty", 0)   # only CE resistance hurts BUY CE
+            # Very strong GEX → momentum likely breaks walls — eliminate penalty
+            if abs(gex_total) >= 400 and gex_regime == "VOLATILE / TRENDING":
+                ce_pen = 0
+            elif gex_regime == "VOLATILE / TRENDING" and ce_pen <= -15:
+                ce_pen = -8
             score   = max(0, score + ce_pen)
             ce_warn = oi_walls.get("ce_warning", "")
             if ce_pen < -10:
@@ -2554,6 +2572,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         _need_score, _need_confluence = 28, 2   # Partial data — relaxed gate
     else:
         _need_score, _need_confluence = 22, 2   # Poor data — very relaxed
+    # Strong GEX overrides → MMs forced to hedge = price WILL move, relax threshold
+    if abs(gex_total) >= 400 and gex_regime == "VOLATILE / TRENDING":
+        _need_score = min(_need_score, 28)
 
     # ── Confluence Gate ───────────────────────────────────────────────────────
     _total_factors  = len(factors)
@@ -2667,6 +2688,10 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             if int(row.strike) == sell_pe: pe_prem = row.pe_ltp or 0
 
         total_prem   = ce_prem + pe_prem
+        if total_prem < 1:
+            return {"signal": "NO TRADE", "reason": "Iron Condor — LTP unavailable for selected strikes",
+                    "score": abs_score, "factors": factors, "vix": vix, "pcr": 0, "iv_rank": iv_rank,
+                    "confluence": confluence_msg, "oi_walls": oi_walls}
         max_profit_r = round(total_prem * lot)
         sl_premium   = round(total_prem * 1.5)
         return {
@@ -3573,6 +3598,14 @@ def live_data_section(symbol, expiry):
     # ── Compute primary signal once — reuse for snapshot + render (M-04) ────────
     primary_sig = generate_trade_signal(cache, symbol)
 
+    # ── Trade Signal Telegram Alert ───────────────────────────────────────────
+    try:
+        _eng = st.session_state.get("alert_engine")
+        if _eng is not None:
+            _eng.send_trade_signal(primary_sig)
+    except Exception as _te:
+        logger.error(f"Trade signal alert error: {_te}")
+
     # ── Snapshot Collector — Backtest data save karo (har 5 min) ─────────────
     try:
         collector = st.session_state.get("snap_collector")
@@ -3580,6 +3613,17 @@ def live_data_section(symbol, expiry):
             collector.collect(cache, symbol, primary_sig)
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
+
+    # ── UOA Alerts — DB save + Telegram alert ────────────────────────────────
+    try:
+        _snap_db  = st.session_state.get("snap_db")
+        _uoa_eng  = st.session_state.get("alert_engine")
+        for _uoa in cache.get("uoa_alerts", []):
+            _is_new = _snap_db.save_uoa_alert(_uoa) if _snap_db else False
+            if _is_new and _uoa_eng is not None:
+                _uoa_eng.send_uoa_alert(_uoa)
+    except Exception as _ue:
+        logger.error(f"UOA save/alert error: {_ue}")
 
     # ── Header ──────────────────────────────────────────────────────────────
     render_header(symbol, expiry, cache)

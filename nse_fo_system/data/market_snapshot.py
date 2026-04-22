@@ -70,8 +70,28 @@ CREATE TABLE IF NOT EXISTS signal_log (
 )
 """
 
+_CREATE_UOA_LOG = """
+CREATE TABLE IF NOT EXISTS uoa_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT    NOT NULL,
+    date        TEXT    NOT NULL,
+    time        TEXT    NOT NULL,
+    symbol      TEXT    NOT NULL,
+    opt_type    TEXT    NOT NULL,
+    strike      INTEGER DEFAULT 0,
+    volume      INTEGER DEFAULT 0,
+    avg_vol     INTEGER DEFAULT 0,
+    multiplier  REAL    DEFAULT 0,
+    sentiment   TEXT    DEFAULT '',
+    is_fire     INTEGER DEFAULT 0,
+    itm_depth   REAL    DEFAULT 0,
+    spot        REAL    DEFAULT 0
+)
+"""
+
 _IDX_SNAP = "CREATE INDEX IF NOT EXISTS idx_snap_sym_date ON snapshots(symbol, date)"
 _IDX_SIG  = "CREATE INDEX IF NOT EXISTS idx_sig_symbol ON signal_log(symbol)"
+_IDX_UOA  = "CREATE INDEX IF NOT EXISTS idx_uoa_sym_date ON uoa_log(symbol, date)"
 
 # Columns added after v1 — auto-migrated if DB already exists
 _NEW_SNAP_COLS = {
@@ -98,8 +118,10 @@ class SnapshotDB:
         with self._conn() as c:
             c.execute(_CREATE_SNAPSHOTS)
             c.execute(_CREATE_SIGNAL_LOG)
+            c.execute(_CREATE_UOA_LOG)
             c.execute(_IDX_SNAP)
             c.execute(_IDX_SIG)
+            c.execute(_IDX_UOA)
             self._migrate(c)
             c.commit()
 
@@ -219,6 +241,75 @@ class SnapshotDB:
                     ).fetchall()
             return [dict(r) for r in rows]
         except Exception as e:
+            return []
+
+    def save_uoa_alert(self, alert) -> bool:
+        """UOA alert DB mein save karo. Duplicate same 5-min slot mein skip."""
+        try:
+            now       = datetime.now()
+            slot_min  = (now.minute // 5) * 5
+            slot_start = now.replace(minute=slot_min, second=0, microsecond=0)
+            with self._lock:
+                with self._conn() as c:
+                    # Same symbol+opt_type+strike same 5-min slot mein already hai?
+                    exists = c.execute(
+                        """SELECT id FROM uoa_log
+                           WHERE symbol=? AND opt_type=? AND strike=? AND ts >= ?
+                           LIMIT 1""",
+                        (alert.symbol, alert.opt_type, int(alert.strike),
+                         slot_start.isoformat())
+                    ).fetchone()
+                    if exists:
+                        return False  # duplicate — skip
+                    c.execute("""
+                        INSERT INTO uoa_log
+                          (ts, date, time, symbol, opt_type, strike,
+                           volume, avg_vol, multiplier, sentiment,
+                           is_fire, itm_depth, spot)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (
+                        now.isoformat(),
+                        now.date().isoformat(),
+                        now.strftime("%H:%M"),
+                        alert.symbol,
+                        alert.opt_type,
+                        int(alert.strike),
+                        int(alert.volume),
+                        int(alert.avg_vol),
+                        round(float(alert.mult), 2),
+                        str(alert.sentiment),
+                        1 if alert.is_fire else 0,
+                        round(float(alert.itm_depth_pct), 2),
+                        round(float(alert.spot_at_alert), 1),
+                    ))
+                    c.commit()
+            return True
+        except Exception as e:
+            logger.error(f"UOA save error: {e}")
+            return False
+
+    def get_uoa_alerts(self, symbol="", from_date="", to_date="", only_fire=False):
+        """UOA alerts history fetch karo."""
+        try:
+            with self._conn() as c:
+                where  = []
+                params = []
+                if symbol:
+                    where.append("symbol=?");    params.append(symbol)
+                if from_date:
+                    where.append("date>=?");     params.append(from_date)
+                if to_date:
+                    where.append("date<=?");     params.append(to_date)
+                if only_fire:
+                    where.append("is_fire=1")
+                sql = "SELECT * FROM uoa_log"
+                if where:
+                    sql += " WHERE " + " AND ".join(where)
+                sql += " ORDER BY ts DESC"
+                rows = c.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"UOA fetch error: {e}")
             return []
 
     def get_stats(self):

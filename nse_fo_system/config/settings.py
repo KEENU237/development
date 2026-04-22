@@ -68,8 +68,8 @@ RISK = {
 #           "chat":{"id": XXXXXXX} — yahi tumhara CHAT_ID hai
 #   Step 4: Neeche fill karo aur ENABLED = True karo
 TELEGRAM_CONFIG = {
-    "bot_token": "8762123584:AAH0jJ8l5y6XDdcCOlS7H78vLbcW6GUcu2w",
-    "chat_id":   "2136453340",
+    "bot_token": "8646425640:AAGpzzRN29wJdj65XwcbtjtHJp8AdcmysGE",
+    "chat_id":   "6884383593",
     "enabled":   True,
 }
 

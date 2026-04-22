@@ -411,6 +411,134 @@ class AlertEngine:
             score=1,
         )
 
+    def send_trade_signal(self, sig: dict) -> bool:
+        """
+        BUY CE / BUY PE / Iron Condor signal aane pe Telegram alert bhejo.
+        Same signal 30 min tak dobara nahi bhejega (cooldown).
+        Returns True if alert was sent.
+        """
+        s = sig.get("signal", "")
+        if s not in ("BUY CE", "BUY PE", "SELL — Iron Condor"):
+            return False
+
+        strike  = sig.get("strike", sig.get("sell_ce", ""))
+        score   = sig.get("score",  0)
+        vix     = sig.get("vix",    0)
+        pcr     = sig.get("pcr",    0)
+        iv_rank = sig.get("iv_rank", 0)
+        conf    = sig.get("confluence", "—")
+        now_str = datetime.now().strftime("%H:%M")
+
+        sig_key = f"TRADE_{s}_{strike}_{datetime.now().strftime('%Y%m%d_%H%M')[:13]}"
+        if self._in_cooldown(sig_key.rsplit("_", 1)[0]):
+            return False
+
+        if s == "BUY CE":
+            emoji   = "📈🟢"
+            entry   = sig.get("entry",  0)
+            target  = sig.get("target", 0)
+            sl      = sig.get("sl",     0)
+            detail  = (
+                f"Strike  : {strike} CE\n"
+                f"Entry   : ₹{entry}\n"
+                f"Target  : ₹{target}  (+{sig.get('gain_pct',0)}%)\n"
+                f"SL      : ₹{sl}  (-{sig.get('loss_pct',0)}%)\n"
+                f"Lots    : {sig.get('lots',1)}  |  Max Loss: ₹{sig.get('max_loss',0):,.0f}\n"
+                f"Score   : {score}/100  |  Confluence: {conf}\n"
+                f"VIX: {vix:.1f}  PCR: {pcr:.2f}  IV Rank: {iv_rank:.0f}%"
+            )
+            action = f"NIFTY CE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
+        elif s == "BUY PE":
+            emoji   = "📉🔴"
+            entry   = sig.get("entry",  0)
+            target  = sig.get("target", 0)
+            sl      = sig.get("sl",     0)
+            detail  = (
+                f"Strike  : {strike} PE\n"
+                f"Entry   : ₹{entry}\n"
+                f"Target  : ₹{target}  (+{sig.get('gain_pct',0)}%)\n"
+                f"SL      : ₹{sl}  (-{sig.get('loss_pct',0)}%)\n"
+                f"Lots    : {sig.get('lots',1)}  |  Max Loss: ₹{sig.get('max_loss',0):,.0f}\n"
+                f"Score   : {score}/100  |  Confluence: {conf}\n"
+                f"VIX: {vix:.1f}  PCR: {pcr:.2f}  IV Rank: {iv_rank:.0f}%"
+            )
+            action = f"NIFTY PE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
+        else:  # Iron Condor
+            emoji      = "🦅🟡"
+            sell_ce    = sig.get("sell_ce",    "")
+            sell_pe    = sig.get("sell_pe",    "")
+            total_prem = sig.get("total_prem", 0)
+            sl_prem    = sig.get("sl_premium", 0)
+            detail  = (
+                f"Sell CE : {sell_ce}  |  Sell PE: {sell_pe}\n"
+                f"Premium : ₹{total_prem:.0f} collect karo\n"
+                f"SL Rule : ₹{sl_prem:.0f} se upar gaya toh exit\n"
+                f"Score   : {score}/100  |  IV Rank: {iv_rank:.0f}%\n"
+                f"VIX: {vix:.1f}  PCR: {pcr:.2f}"
+            )
+            action = f"CE {sell_ce} + PE {sell_pe} SELL karo. Premium: ₹{total_prem:.0f}. SL: ₹{sl_prem:.0f}"
+
+        alert = TriggerAlert(
+            time=now_str, category="URGENT",
+            signal_key=sig_key.rsplit("_", 1)[0],
+            title=f"{emoji} {s} SIGNAL — Strike {strike}",
+            detail=detail, action=action, score=3,
+        )
+        self._mark_sent(alert.signal_key)
+        if self.enabled and self.bot_token and self.chat_id:
+            self._send_telegram(alert)
+            logger.info(f"Trade signal Telegram sent: {s} {strike}")
+            return True
+        return False
+
+    def send_uoa_alert(self, alert) -> bool:
+        """
+        UOA alert aane pe Telegram bhejo — NIFTY aur BANKNIFTY dono ke liye.
+        Same strike 30 min tak dobara nahi bhejega.
+        Returns True if alert was sent.
+        """
+        sig_key = f"UOA_{alert.symbol}_{alert.opt_type}_{int(alert.strike)}"
+        if self._in_cooldown(sig_key):
+            return False
+
+        is_bull   = "BULL" in alert.sentiment
+        dir_emoji = "📈" if is_bull else "📉"
+        fire_tag  = " 🔥 FIRE" if alert.is_fire else ""
+        mult_tag  = f"{alert.mult:.1f}x{fire_tag}"
+        sentiment = alert.sentiment.replace("_", " ")
+
+        depth_line = f"\nITM Depth: {alert.itm_depth_pct:.1f}%" if alert.itm_depth_pct > 0 else ""
+        spot_line  = f"\nSpot     : ₹{alert.spot_at_alert:,.0f}" if alert.spot_at_alert > 0 else ""
+
+        detail = (
+            f"Symbol   : {alert.symbol}\n"
+            f"Strike   : {int(alert.strike)} {alert.opt_type}\n"
+            f"Volume   : {mult_tag} avg se zyada\n"
+            f"Sentiment: {dir_emoji} {sentiment}"
+            f"{depth_line}{spot_line}"
+        )
+        action = (
+            f"Dashboard pe UOA panel dekho.\n"
+            f"PCR + GEX se confirm karo phir trade lo."
+        )
+        title = f"{dir_emoji} UOA — {alert.symbol} {int(alert.strike)} {alert.opt_type} ({mult_tag})"
+
+        tg_alert = TriggerAlert(
+            time=datetime.now().strftime("%H:%M"),
+            category="URGENT" if alert.is_fire else "IMPORTANT",
+            signal_key=sig_key,
+            title=title,
+            detail=detail,
+            action=action,
+            score=3 if alert.is_fire else 2,
+        )
+        self._mark_sent(sig_key)
+        if self.enabled and self.bot_token and self.chat_id:
+            self._send_telegram(tg_alert)
+            logger.info(f"UOA Telegram sent: {alert.symbol} {int(alert.strike)} {alert.opt_type} {alert.mult:.1f}x")
+            return True
+        return False
+
     # ── Cooldown helpers ──────────────────────────────────────────────────────
 
     def _in_cooldown(self, signal_key: str) -> bool:
