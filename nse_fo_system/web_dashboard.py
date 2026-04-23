@@ -12,6 +12,7 @@ import sys
 import time
 import logging
 from datetime import datetime
+from stock_scanner_tab import render_stock_scanner
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
@@ -4430,7 +4431,8 @@ def render_topbar() -> str:
 
     with c_nav:
         pages = ["📊  Live Dashboard", "🧠  Advanced Signals",
-                 "🧭  Trend Compass",  "🔬  Backtester"]
+                 "🧭  Trend Compass",  "🔬  Backtester",
+                 "📡  Stock Scanner"]
         page = st.selectbox("nav", pages, label_visibility="collapsed")
 
     with c_status:
@@ -4968,6 +4970,9 @@ def main():
 
     elif "Backtester" in page:
         render_backtester(symbol)
+
+    elif "Stock Scanner" in page:
+        render_stock_scanner(kite)
 
 
 if __name__ == "__main__":
