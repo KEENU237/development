@@ -1,49 +1,66 @@
 """
-Run this once to add Stock Scanner tab to web_dashboard.py
-Usage: python patch_scanner.py
+Run from: D:\\HDFC\\nse_fo_system\\nse_fo_system\\
+This patches the OUTER web_dashboard.py (one folder up) where user actually runs the dashboard.
 """
 import os, sys, shutil
 
-dashboard = os.path.join(os.path.dirname(__file__), "web_dashboard.py")
+this_dir   = os.path.dirname(os.path.abspath(__file__))
+outer_dir  = os.path.dirname(this_dir)
+
+# web_dashboard.py jo actually use hoti hai
+dashboard = os.path.join(outer_dir, "web_dashboard.py")
+
+# Agar outer mein nahi mila — same folder mein try karo
+if not os.path.exists(dashboard):
+    dashboard = os.path.join(this_dir, "web_dashboard.py")
 
 if not os.path.exists(dashboard):
-    print("ERROR: web_dashboard.py not found in current folder")
+    print("ERROR: web_dashboard.py nahi mili.")
     sys.exit(1)
+
+print(f"Patching: {dashboard}")
 
 with open(dashboard, "r", encoding="utf-8") as f:
     content = f.read()
 
-# Already patched?
 if "stock_scanner_tab" in content:
-    print("Already patched — Stock Scanner tab is already present.")
-    sys.exit(0)
-
-# Backup
-shutil.copy(dashboard, dashboard + ".bak_scanner")
-print("Backup created: web_dashboard.py.bak_scanner")
-
-# Patch 1 — Import line (after last import block)
-old_import = "from datetime import datetime"
-new_import  = "from datetime import datetime\nfrom stock_scanner_tab import render_stock_scanner"
-content = content.replace(old_import, new_import, 1)
-
-# Patch 2 — Add to pages list
-old_pages = '"🔬  Backtester"]'
-new_pages  = '"🔬  Backtester",\n                 "📡  Stock Scanner"]'
-content = content.replace(old_pages, new_pages, 1)
-
-# Patch 3 — Add routing elif
-old_route = '    elif "Backtester" in page:\n        render_backtester(symbol)'
-new_route  = ('    elif "Backtester" in page:\n        render_backtester(symbol)\n\n'
-              '    elif "Stock Scanner" in page:\n        render_stock_scanner(kite)')
-content = content.replace(old_route, new_route, 1)
-
-with open(dashboard, "w", encoding="utf-8") as f:
-    f.write(content)
-
-# Verify
-if "stock_scanner_tab" in content and "Stock Scanner" in content:
-    print("SUCCESS — Stock Scanner tab added to web_dashboard.py")
-    print("Now restart: streamlit run web_dashboard.py")
+    print("Already patched — Stock Scanner tab already present.")
 else:
-    print("FAILED — something went wrong, check web_dashboard.py manually")
+    shutil.copy(dashboard, dashboard + ".bak_scanner")
+
+    content = content.replace(
+        "from datetime import datetime",
+        "from datetime import datetime\nfrom stock_scanner_tab import render_stock_scanner",
+        1
+    )
+    content = content.replace(
+        '"🔬  Backtester"]',
+        '"🔬  Backtester",\n                 "📡  Stock Scanner"]',
+        1
+    )
+    content = content.replace(
+        '    elif "Backtester" in page:\n        render_backtester(symbol)',
+        '    elif "Backtester" in page:\n        render_backtester(symbol)\n\n    elif "Stock Scanner" in page:\n        render_stock_scanner(kite)',
+        1
+    )
+
+    with open(dashboard, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("web_dashboard.py patched successfully.")
+
+# stock_scanner_tab.py bhi outer folder mein copy karo
+src_scanner = os.path.join(this_dir, "stock_scanner_tab.py")
+dst_scanner = os.path.join(outer_dir, "stock_scanner_tab.py")
+
+if os.path.exists(src_scanner):
+    if not os.path.exists(os.path.join(outer_dir, "web_dashboard.py")):
+        dst_scanner = os.path.join(this_dir, "stock_scanner_tab.py")
+    else:
+        shutil.copy(src_scanner, dst_scanner)
+        print(f"stock_scanner_tab.py copied to: {dst_scanner}")
+else:
+    print("WARNING: stock_scanner_tab.py not found in this folder.")
+
+print("\nDone! Now run:")
+print(f"  cd {outer_dir if os.path.exists(os.path.join(outer_dir, 'web_dashboard.py')) else this_dir}")
+print("  streamlit run web_dashboard.py")
