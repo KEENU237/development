@@ -484,8 +484,8 @@ class AlertEngine:
             title=f"{emoji} {s} SIGNAL — Strike {strike}",
             detail=detail, action=action, score=3,
         )
-        self._mark_sent(alert.signal_key)
         if self.enabled and self.bot_token and self.chat_id:
+            self._mark_sent(alert.signal_key)
             self._send_telegram(alert)
             logger.info(f"Trade signal Telegram sent: {s} {strike}")
             return True
@@ -532,8 +532,8 @@ class AlertEngine:
             action=action,
             score=3 if alert.is_fire else 2,
         )
-        self._mark_sent(sig_key)
         if self.enabled and self.bot_token and self.chat_id:
+            self._mark_sent(sig_key)
             self._send_telegram(tg_alert)
             logger.info(f"UOA Telegram sent: {alert.symbol} {int(alert.strike)} {alert.opt_type} {alert.mult:.1f}x")
             return True
