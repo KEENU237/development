@@ -382,7 +382,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
             score = SELL_ZONE + 1
 
     # ── Signal ────────────────────────────────────────────────────────────────
-    if len(filters) >= 2:        sig, dirn = "FILTERED",   "NEUTRAL"
+    if len(filters) >= 1:        sig, dirn = "FILTERED",   "NEUTRAL"
     elif score >= BUY_ZONE + 2:  sig, dirn = "STRONG BUY", "BULLISH"
     elif score >= BUY_ZONE:      sig, dirn = "BUY",         "BULLISH"
     elif score <= SELL_ZONE - 2: sig, dirn = "STRONG SELL", "BEARISH"
@@ -521,7 +521,7 @@ def render_stock_scanner(kite=None):
     # ── Controls ──────────────────────────────────────────────────────────────
     fc1, fc2, fc3 = st.columns([1, 1, 1])
     with fc1:
-        min_score = st.slider("Min IFS Score", 0, 12, BUY_ZONE)
+        min_score = st.slider("Min Signal Strength (|IFS Score|)", 0, 12, 6)
     with fc2:
         dir_f = st.selectbox("Direction", ["ALL", "BULLISH", "BEARISH"])
     with fc3:
@@ -588,7 +588,7 @@ def render_stock_scanner(kite=None):
         return
 
     shown = [r for r in results
-             if r["score"] >= min_score and r["signal"] != "FILTERED"]
+             if abs(r["score"]) >= min_score and r["signal"] != "FILTERED"]
     if dir_f != "ALL":
         shown = [r for r in shown if r["dir"] == dir_f]
     if sig_f != "ALL":
