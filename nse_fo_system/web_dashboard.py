@@ -2551,7 +2551,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                 pe_pen = 0
             elif gex_regime == "VOLATILE / TRENDING" and pe_pen <= -15:
                 pe_pen = -8
-            score   = min(0, score - abs(pe_pen))            # symmetric: reduce bearish magnitude
+            score   = min(0, score + abs(pe_pen))            # reduce bearish magnitude when PUT wall blocks path
             pe_warn = oi_walls.get("pe_warning", "")
             if pe_pen < -10:
                 factors["OI Wall"] = ("🛡️", pe_warn, "Strong PUT support — bounce likely, BUY PE risky", "#ff6d00")
@@ -2817,33 +2817,27 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "oi_walls":      oi_walls,
         }
 
-    # ── Momentum Confirmation — price must already be moving in signal direction ─
-    # Prevents entries where score is bullish but price is still falling.
-    # Uses opening price as reference (first 5 min of session).
-    _open_price = 0.0
-    for row in oi_chain:
-        break   # oi_chain rows don't have open — use VP or spot drift check
-    _vp_open = vp_data.get("open_price", 0)
-    if _vp_open <= 0 and oi_chain:
-        _vp_open = spot   # fallback: no open data, skip momentum check
-
+    # ── Momentum Confirmation — price must be on the correct side of Volume POC ──
+    # vp_data contains: poc, vah, val, step — no open_price key available.
+    # POC = price level with highest traded volume; spot > POC = bullish control.
+    _poc = vp_data.get("poc", 0)
     _momentum_ok = True
-    if _vp_open > 0 and spot > 0:
-        _price_drift = (spot - _vp_open) / _vp_open * 100
-        if score >= _need_score and _price_drift < -0.15:
-            _momentum_ok = False   # BUY CE but price -0.15% from open = no momentum
-            factors["Momentum"] = ("❌", f"Price {_price_drift:+.2f}% from open",
-                                   "Price drifting DOWN despite bullish score — wait for reversal", "#ff6d00")
-        elif score <= -_need_score and _price_drift > 0.15:
-            _momentum_ok = False   # BUY PE but price +0.15% from open = no momentum
-            factors["Momentum"] = ("❌", f"Price {_price_drift:+.2f}% from open",
-                                   "Price drifting UP despite bearish score — wait for reversal", "#ff6d00")
+    if _poc and spot:
+        _poc_dist_pct = (spot - _poc) / _poc * 100
+        if score >= _need_score and spot < _poc:
+            _momentum_ok = False
+            factors["Momentum"] = ("❌", f"Spot ₹{spot:,.0f} < POC ₹{_poc:,.0f} ({_poc_dist_pct:+.2f}%)",
+                                   "Price BELOW volume POC — bears in control, BUY CE risky", "#ff6d00")
+        elif score <= -_need_score and spot > _poc:
+            _momentum_ok = False
+            factors["Momentum"] = ("❌", f"Spot ₹{spot:,.0f} > POC ₹{_poc:,.0f} ({_poc_dist_pct:+.2f}%)",
+                                   "Price ABOVE volume POC — bulls in control, BUY PE risky", "#ff6d00")
         elif score >= _need_score:
-            factors["Momentum"] = ("✅", f"Price {_price_drift:+.2f}% from open",
-                                   "Price moving with signal direction", "#00c853")
+            factors["Momentum"] = ("✅", f"Spot ₹{spot:,.0f} > POC ₹{_poc:,.0f} ({_poc_dist_pct:+.2f}%)",
+                                   "Price above POC — momentum confirms BUY CE", "#00c853")
         elif score <= -_need_score:
-            factors["Momentum"] = ("✅", f"Price {_price_drift:+.2f}% from open",
-                                   "Price moving with signal direction", "#00c853")
+            factors["Momentum"] = ("✅", f"Spot ₹{spot:,.0f} < POC ₹{_poc:,.0f} ({_poc_dist_pct:+.2f}%)",
+                                   "Price below POC — momentum confirms BUY PE", "#00c853")
 
     if not _momentum_ok:
         return {
