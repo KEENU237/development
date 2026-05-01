@@ -3576,6 +3576,145 @@ def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
 # ALERT HISTORY PANEL
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _track_signal_outcomes(db, cache: dict, symbol: str):
+    """
+    Har refresh pe PENDING signals check karo.
+    Agar current option LTP target ya SL cross kar gaya → outcome update karo.
+    Option LTP OI chain se milta hai (same cache jo display mein use hota hai).
+    """
+    if not db:
+        return
+    from datetime import date as _date
+    today   = _date.today().isoformat()
+    pending = db.get_signals(symbol, from_date=today, to_date=today)
+    pending = [s for s in pending if s.get("outcome", "PENDING") == "PENDING"]
+    if not pending:
+        return
+
+    oi_chain = cache.get("oi_chain", [])
+    # Build a quick strike → (ce_ltp, pe_ltp) lookup
+    ltp_map: dict = {}
+    for row in oi_chain:
+        try:
+            ltp_map[int(row.strike)] = (row.ce_ltp or 0, row.pe_ltp or 0)
+        except Exception:
+            pass
+
+    for sig in pending:
+        sig_id   = sig.get("id", -1)
+        sig_type = sig.get("signal", "")
+        strike   = sig.get("strike", 0)
+        entry    = sig.get("entry_price", 0)
+        target   = sig.get("target", 0)
+        sl       = sig.get("sl", 0)
+
+        if sig_id < 0 or not strike or not entry:
+            continue
+
+        opt_type = "CE" if "CE" in sig_type else "PE"
+        ce_ltp, pe_ltp = ltp_map.get(int(strike), (0, 0))
+        curr_ltp = ce_ltp if opt_type == "CE" else pe_ltp
+
+        if curr_ltp <= 0:
+            continue  # LTP unavailable — check next cycle
+
+        if curr_ltp >= target:
+            pnl_pct = round((curr_ltp - entry) / entry * 100, 1)
+            db.update_signal_outcome(sig_id, "WIN", curr_ltp, pnl_pct)
+        elif curr_ltp <= sl:
+            pnl_pct = round((curr_ltp - entry) / entry * 100, 1)
+            db.update_signal_outcome(sig_id, "LOSS", curr_ltp, pnl_pct)
+
+
+def _render_signal_history(db, symbol: str):
+    """
+    Aaj ke BUY CE / BUY PE / Iron Condor signals ka table.
+    DB se read karta hai — live outcomes bhi dikhata hai.
+    """
+    from datetime import date as _date
+    import pandas as _pd
+
+    if not db:
+        st.info("Database connected nahi — signal history unavailable.")
+        return
+
+    today   = _date.today().isoformat()
+    signals = db.get_signals(symbol, from_date=today, to_date=today)
+    # Only actionable signals
+    signals = [s for s in signals if s.get("signal", "") in
+               ("BUY CE", "BUY PE", "SELL — Iron Condor")]
+
+    if not signals:
+        st.info(f"Aaj ({today}) koi BUY/SELL signal generate nahi hua abhi tak.")
+        return
+
+    rows = []
+    for s in signals:
+        outcome = s.get("outcome", "PENDING")
+        pnl_pct = s.get("pnl_pct", 0)
+        exit_px = s.get("exit_price", 0)
+
+        if outcome == "WIN":
+            outcome_str = f"✅ WIN  (+{pnl_pct:.1f}%)"
+        elif outcome == "LOSS":
+            outcome_str = f"❌ LOSS ({pnl_pct:.1f}%)"
+        else:
+            outcome_str = "⏳ PENDING"
+
+        rows.append({
+            "Time":    s.get("ts", "")[:16].replace("T", " "),
+            "Signal":  s.get("signal", ""),
+            "Strike":  int(s.get("strike", 0)),
+            "Entry ₹": round(s.get("entry_price", 0), 1),
+            "Target ₹": round(s.get("target", 0), 1),
+            "SL ₹":    round(s.get("sl", 0), 1),
+            "Exit ₹":  round(exit_px, 1) if exit_px else "—",
+            "Score":   s.get("score", 0),
+            "PCR":     round(s.get("pcr", 0), 2),
+            "VIX":     round(s.get("vix", 0), 1),
+            "Outcome": outcome_str,
+        })
+
+    df = _pd.DataFrame(rows)
+
+    # Summary metrics
+    total  = len(rows)
+    wins   = sum(1 for s in signals if s.get("outcome") == "WIN")
+    losses = sum(1 for s in signals if s.get("outcome") == "LOSS")
+    pend   = total - wins - losses
+    win_rt = round(wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1.metric("Total Signals", total)
+    mc2.metric("✅ WIN",   wins)
+    mc3.metric("❌ LOSS",  losses)
+    mc4.metric("⏳ Pending", pend)
+    mc5.metric("Win Rate", f"{win_rt}%" if (wins + losses) > 0 else "—")
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Signal":   st.column_config.TextColumn("Signal", width="medium"),
+            "Outcome":  st.column_config.TextColumn("Outcome", width="medium"),
+            "Score":    st.column_config.NumberColumn("Score", format="%d"),
+        }
+    )
+
+    # All-time summary from DB
+    stats = db.get_stats() if hasattr(db, "get_stats") else {}
+    if stats.get("outcomes"):
+        all_win  = stats["outcomes"].get("WIN",  0)
+        all_loss = stats["outcomes"].get("LOSS", 0)
+        if all_win + all_loss > 0:
+            all_wr = round(all_win / (all_win + all_loss) * 100)
+            st.caption(
+                f"📈 All-time (DB): {stats['total_signals']} signals · "
+                f"Win {all_win} / Loss {all_loss} · Win Rate **{all_wr}%**"
+            )
+
+
 def _render_alert_history():
     """
     Recent alerts ka chhota collapsible panel.
@@ -3689,6 +3828,14 @@ def live_data_section(symbol, expiry):
     except Exception as _sc:
         logger.error(f"Snapshot collect error: {_sc}")
 
+    # ── Outcome Tracker — PENDING signals ka WIN/LOSS check karo ─────────────
+    try:
+        _snap_db_ot = st.session_state.get("snap_db")
+        if _snap_db_ot is not None:
+            _track_signal_outcomes(_snap_db_ot, cache, symbol)
+    except Exception as _ot:
+        logger.error(f"Outcome tracking error: {_ot}")
+
     # ── UOA Alerts — DB save + Telegram alert ────────────────────────────────
     try:
         _snap_db  = st.session_state.get("snap_db")
@@ -3766,6 +3913,14 @@ def live_data_section(symbol, expiry):
     with col_rk:
         st.markdown("### 🛡️ Portfolio Risk")
         render_risk(cache)
+
+    st.divider()
+
+    # ── Signal History — Aaj ke sab trade signals + outcomes ─────────────────
+    st.markdown("### 📋 Signal History — Aaj ke Trade Signals")
+    st.caption("Har 60 sec pe auto-update · WIN/LOSS jab option price target/SL touch kare")
+    _snap_db_sh = st.session_state.get("snap_db")
+    _render_signal_history(_snap_db_sh, symbol)
 
     # ── Footer ───────────────────────────────────────────────────────────────
     st.divider()
