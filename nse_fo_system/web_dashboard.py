@@ -12,11 +12,12 @@ import sys
 import time
 import logging
 from datetime import datetime
-from stock_scanner_tab import render_stock_scanner
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+from stock_scanner_tab import render_stock_scanner
 
 import streamlit as st
 import pandas as pd
@@ -2344,7 +2345,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                 if atm_ce_ltp > 0 and atm_pe_ltp > 0:
                     # CE LTP rising relative to PE LTP → call buyers (bullish)
                     # CE LTP falling relative to PE LTP → call writers (bearish)
-                    if atm_ce_ltp >= atm_pe_ltp * 0.9:
+                    # 0.85 threshold (not 0.90) — accounts for natural put-call skew
+                    # where CE options are structurally cheaper than PE of same strike
+                    if atm_ce_ltp >= atm_pe_ltp * 0.85:
                         atm_build = "FL"; score += 15; bull_count += 1
                         factors["OI Build"] = ("✅", f"CE OI +{ce_chg:,} | CE₹{atm_ce_ltp:.0f} PE₹{atm_pe_ltp:.0f}",
                                                "Fresh Call Buy — Buyers entering (bullish)", "#69f0ae")
@@ -2527,8 +2530,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     oi_walls = _detect_oi_walls(oi_chain, spot, step)
     if oi_walls:
         if score > 0:
-            ce_pen  = oi_walls.get("ce_score_penalty", 0)   # only CE resistance hurts BUY CE
-            # Very strong GEX → momentum likely breaks walls — eliminate penalty
+            ce_pen  = oi_walls.get("ce_score_penalty", 0)
+            # Strong GEX momentum likely breaks walls — reduce/eliminate penalty
             if abs(gex_total) >= 400 and gex_regime == "VOLATILE / TRENDING":
                 ce_pen = 0
             elif gex_regime == "VOLATILE / TRENDING" and ce_pen <= -15:
@@ -2543,7 +2546,12 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                 factors["OI Wall"] = ("✅", ce_warn, "Path clear above", "#00c853")
         elif score < 0:
             pe_pen  = oi_walls.get("pe_score_penalty", 0)   # pe_pen is ≤ 0 (e.g. -15)
-            score   = min(0, score + abs(pe_pen))            # reduce bearish magnitude
+            # Symmetric GEX override for PE path — same logic as CE
+            if abs(gex_total) >= 400 and gex_regime == "VOLATILE / TRENDING":
+                pe_pen = 0
+            elif gex_regime == "VOLATILE / TRENDING" and pe_pen <= -15:
+                pe_pen = -8
+            score   = min(0, score - abs(pe_pen))            # symmetric: reduce bearish magnitude
             pe_warn = oi_walls.get("pe_warning", "")
             if pe_pen < -10:
                 factors["OI Wall"] = ("🛡️", pe_warn, "Strong PUT support — bounce likely, BUY PE risky", "#ff6d00")
@@ -2568,11 +2576,11 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         bool(vp_data.get("poc")),    # Volume Profile loaded
     ])
     if _data_count >= 5:
-        _need_score, _need_confluence = 35, 3   # Full data — strict gate
+        _need_score, _need_confluence = 35, 4   # Full data — strict gate (raised from 3→4)
     elif _data_count >= 3:
-        _need_score, _need_confluence = 28, 2   # Partial data — relaxed gate
+        _need_score, _need_confluence = 28, 3   # Partial data — moderate gate (raised from 2→3)
     else:
-        _need_score, _need_confluence = 22, 2   # Poor data — very relaxed
+        _need_score, _need_confluence = 22, 2   # Poor data — relaxed gate
     # Strong GEX overrides → MMs forced to hedge = price WILL move, relax threshold
     if abs(gex_total) >= 400 and gex_regime == "VOLATILE / TRENDING":
         _need_score = min(_need_score, 28)
@@ -2769,6 +2777,78 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         return {
             "signal":        "NO TRADE",
             "reason":        _block_reason,
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
+        }
+
+    # ── Time Window Filter — only best intraday windows ──────────────────────
+    # 9:45–11:15 : ORB confirmed, institutions active, clean signals
+    # 13:30–14:30: Post-lunch directional move, before closing noise
+    # Outside these windows → downgrade to NO TRADE for directional signals
+    _best_window = (
+        dtime(9, 45)  <= now_time <= dtime(11, 15) or
+        dtime(13, 30) <= now_time <= dtime(14, 30)
+    )
+    if not _best_window and get_market_status() == "OPEN" and not data_missing:
+        if dtime(9, 30) <= now_time < dtime(9, 45):
+            time_warning = (time_warning or "") + "  ⏳ 9:30–9:45: ORB forming — wait for 9:45 breakout confirmation."
+        elif dtime(11, 15) < now_time < dtime(13, 30):
+            time_warning = (time_warning or "") + "  😴 11:15–13:30: Midday chop zone — low reliability window."
+        elif now_time > dtime(14, 30):
+            time_warning = (time_warning or "") + "  🔔 Post 14:30: Closing positions — avoid fresh directional entries."
+        return {
+            "signal":        "NO TRADE",
+            "reason":        f"Outside best signal window (9:45–11:15 or 13:30–14:30). Current: {now_time.strftime('%H:%M')}",
+            "confluence":    confluence_msg,
+            "score":         abs_score,
+            "factors":       factors,
+            "vix":           vix,
+            "pcr":           pcr_value,
+            "build":         atm_build,
+            "time_warning":  time_warning,
+            "is_expiry_day": is_expiry_day,
+            "oi_walls":      oi_walls,
+        }
+
+    # ── Momentum Confirmation — price must already be moving in signal direction ─
+    # Prevents entries where score is bullish but price is still falling.
+    # Uses opening price as reference (first 5 min of session).
+    _open_price = 0.0
+    for row in oi_chain:
+        break   # oi_chain rows don't have open — use VP or spot drift check
+    _vp_open = vp_data.get("open_price", 0)
+    if _vp_open <= 0 and oi_chain:
+        _vp_open = spot   # fallback: no open data, skip momentum check
+
+    _momentum_ok = True
+    if _vp_open > 0 and spot > 0:
+        _price_drift = (spot - _vp_open) / _vp_open * 100
+        if score >= _need_score and _price_drift < -0.15:
+            _momentum_ok = False   # BUY CE but price -0.15% from open = no momentum
+            factors["Momentum"] = ("❌", f"Price {_price_drift:+.2f}% from open",
+                                   "Price drifting DOWN despite bullish score — wait for reversal", "#ff6d00")
+        elif score <= -_need_score and _price_drift > 0.15:
+            _momentum_ok = False   # BUY PE but price +0.15% from open = no momentum
+            factors["Momentum"] = ("❌", f"Price {_price_drift:+.2f}% from open",
+                                   "Price drifting UP despite bearish score — wait for reversal", "#ff6d00")
+        elif score >= _need_score:
+            factors["Momentum"] = ("✅", f"Price {_price_drift:+.2f}% from open",
+                                   "Price moving with signal direction", "#00c853")
+        elif score <= -_need_score:
+            factors["Momentum"] = ("✅", f"Price {_price_drift:+.2f}% from open",
+                                   "Price moving with signal direction", "#00c853")
+
+    if not _momentum_ok:
+        return {
+            "signal":        "NO TRADE",
+            "reason":        "Momentum not confirming signal — price moving opposite to score direction",
             "confluence":    confluence_msg,
             "score":         abs_score,
             "factors":       factors,

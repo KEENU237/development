@@ -85,9 +85,9 @@ class AlertEngine:
             if self._in_cooldown(alert.signal_key):
                 continue
             triggered.append(alert)
-            self._mark_sent(alert.signal_key)
-            # Sirf tab bhejo jab enabled=True aur credentials set hon
+            # _mark_sent only when actually sending — prevents phantom cooldowns
             if self.enabled and self.bot_token and self.chat_id:
+                self._mark_sent(alert.signal_key)
                 self._send_telegram(alert)
 
         return triggered

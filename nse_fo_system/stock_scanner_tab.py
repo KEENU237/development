@@ -254,6 +254,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
             "filters": ["Result date / manual skip"],
+            "sector": STOCK_SECTOR.get(symbol, "Other"),
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0,
         }
 
