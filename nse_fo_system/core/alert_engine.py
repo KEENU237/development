@@ -76,7 +76,7 @@ class AlertEngine:
         alerts = engine.check_and_send(cache, symbol, gex_history)
     """
 
-    COOLDOWN_MINUTES = 30   # Same signal 30 min ke andar repeat nahi hoga
+    COOLDOWN_MINUTES = 0    # No cooldown — har 60 sec pe signal fire karega
 
     def __init__(self, bot_token: str = "", chat_id: str = "",
                  enabled: bool = False):
