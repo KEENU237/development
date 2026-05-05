@@ -8,11 +8,37 @@ Same signal 30 min tak dobara alert nahi karta (spam filter).
 
 import requests
 import logging
+import json
+import os
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+# File-based cooldown — shared across all browser sessions / tabs
+# In-memory dict alone fails when multiple tabs are open (each has own session_state)
+_COOLDOWN_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "alert_cooldown.json"
+)
+
+def _read_cooldown_file() -> dict:
+    try:
+        if os.path.exists(_COOLDOWN_FILE):
+            with open(_COOLDOWN_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _write_cooldown_file(data: dict):
+    try:
+        os.makedirs(os.path.dirname(_COOLDOWN_FILE), exist_ok=True)
+        with open(_COOLDOWN_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.warning(f"Cooldown file write failed: {e}")
 
 # ── Category emojis for Telegram ─────────────────────────────────────────────
 CATEGORY_EMOJI = {
@@ -546,16 +572,32 @@ class AlertEngine:
     # ── Cooldown helpers ──────────────────────────────────────────────────────
 
     def _in_cooldown(self, signal_key: str) -> bool:
-        """True = same signal recently bheja, dobara mat bhejo."""
+        """True = same signal recently bheja, dobara mat bhejo.
+        File + memory dono check karta hai — multi-tab safe."""
+        # Memory check (fast path)
         last_time = self._last_sent.get(signal_key)
-        if last_time is None:
-            return False
-        elapsed = (datetime.now() - last_time).total_seconds()
-        return elapsed < (self.COOLDOWN_MINUTES * 60)
+        if last_time and (datetime.now() - last_time).total_seconds() < (self.COOLDOWN_MINUTES * 60):
+            return True
+        # File check (cross-session / multi-tab)
+        data = _read_cooldown_file()
+        ts_str = data.get(signal_key)
+        if ts_str:
+            try:
+                last_file = datetime.fromisoformat(ts_str)
+                if (datetime.now() - last_file).total_seconds() < (self.COOLDOWN_MINUTES * 60):
+                    self._last_sent[signal_key] = last_file  # sync to memory
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _mark_sent(self, signal_key: str):
-        """Signal sent — timestamp save karo."""
-        self._last_sent[signal_key] = datetime.now()
+        """Signal sent — memory aur file dono mein timestamp save karo."""
+        now = datetime.now()
+        self._last_sent[signal_key] = now
+        data = _read_cooldown_file()
+        data[signal_key] = now.isoformat()
+        _write_cooldown_file(data)
 
     # ── Telegram sender ───────────────────────────────────────────────────────
 
