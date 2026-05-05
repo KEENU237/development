@@ -200,6 +200,16 @@ except Exception as exc:
 def init_session() -> bool:
     if not IMPORTS_OK:
         return False
+
+    # AlertEngine is independent of Kite — create it first so Telegram
+    # works even when the Kite token is expired / not yet set.
+    if "alert_engine" not in st.session_state:
+        st.session_state["alert_engine"] = AlertEngine(
+            bot_token = TELEGRAM_CONFIG.get("bot_token", ""),
+            chat_id   = TELEGRAM_CONFIG.get("chat_id",   ""),
+            enabled   = TELEGRAM_CONFIG.get("enabled",   False),
+        )
+
     if "kite" not in st.session_state:
         try:
             kite = KiteManager(KITE_API_KEY, KITE_API_SECRET)
@@ -212,16 +222,10 @@ def init_session() -> bool:
             st.session_state["symbol"]     = "NIFTY"
             st.session_state["prev_pcr"]   = {}
             st.session_state["vp_session"] = "Today"
-            st.session_state["gex_history"]   = []   # Tab2: Gamma Acceleration history
-            st.session_state["smi_history"]   = {}   # Tab2: SMI daily history
-            st.session_state["alert_history"] = []   # Recent alerts (last 20)
+            st.session_state["gex_history"]   = []
+            st.session_state["smi_history"]   = {}
+            st.session_state["alert_history"] = []
             st.session_state["compass"] = TrendCompass(st.session_state["kite"])
-            # Alert Engine — Telegram notifications
-            st.session_state["alert_engine"] = AlertEngine(
-                bot_token = TELEGRAM_CONFIG.get("bot_token", ""),
-                chat_id   = TELEGRAM_CONFIG.get("chat_id",   ""),
-                enabled   = TELEGRAM_CONFIG.get("enabled",   False),
-            )
             # Backtesting — snapshot collector + engine
             _snap_db = SnapshotDB()
             st.session_state["snap_db"]        = _snap_db
@@ -3769,6 +3773,23 @@ def _render_alert_history():
             f"{rows_html}",
             unsafe_allow_html=True,
         )
+        if engine and engine.enabled:
+            if st.button("📨 Test Telegram", key="test_telegram_btn",
+                         help="Ek test message bhejta hai Telegram pe"):
+                import requests as _req
+                try:
+                    url  = f"https://api.telegram.org/bot{engine.bot_token}/sendMessage"
+                    resp = _req.post(url, json={
+                        "chat_id":    engine.chat_id,
+                        "text":       "✅ <b>NSE F&O Dashboard</b> — Telegram connected!\nYe test message hai.",
+                        "parse_mode": "HTML",
+                    }, timeout=10)
+                    if resp.ok:
+                        st.success("✅ Test message sent! Check your Telegram.")
+                    else:
+                        st.error(f"❌ Failed: {resp.text}")
+                except Exception as _e:
+                    st.error(f"❌ Error: {_e}")
 
 
 
