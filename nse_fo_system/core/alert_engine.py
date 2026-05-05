@@ -418,7 +418,7 @@ class AlertEngine:
         Returns True if alert was sent.
         """
         s = sig.get("signal", "")
-        if s not in ("BUY CE", "BUY PE", "SELL — Iron Condor"):
+        if s not in ("BUY CE", "BUY PE"):
             return False
 
         strike  = sig.get("strike", sig.get("sell_ce", ""))

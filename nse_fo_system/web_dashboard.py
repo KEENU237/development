@@ -2792,35 +2792,18 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             "oi_walls":      oi_walls,
         }
 
-    # ── Time Window Filter — only best intraday windows ──────────────────────
-    # 9:45–11:15 : ORB confirmed, institutions active, clean signals
-    # 13:30–14:30: Post-lunch directional move, before closing noise
-    # Outside these windows → downgrade to NO TRADE for directional signals
+    # ── Time Window — informational warnings only, no hard block ─────────────
     _best_window = (
         dtime(9, 45)  <= now_time <= dtime(11, 15) or
         dtime(13, 30) <= now_time <= dtime(14, 30)
     )
-    if not _best_window and get_market_status() == "OPEN" and not data_missing:
+    if not _best_window and get_market_status() == "OPEN":
         if dtime(9, 30) <= now_time < dtime(9, 45):
-            time_warning = (time_warning or "") + "  ⏳ 9:30–9:45: ORB forming — wait for 9:45 breakout confirmation."
+            time_warning = (time_warning or "") + "  ⏳ 9:30–9:45: ORB forming — verify before entry."
         elif dtime(11, 15) < now_time < dtime(13, 30):
-            time_warning = (time_warning or "") + "  😴 11:15–13:30: Midday chop zone — low reliability window."
+            time_warning = (time_warning or "") + "  😴 11:15–13:30: Midday chop zone — verify before entry."
         elif now_time > dtime(14, 30):
-            time_warning = (time_warning or "") + "  🔔 Post 14:30: Closing positions — avoid fresh directional entries."
-        return {
-            "signal":        "NO TRADE",
-            "reason":        f"Outside best signal window (9:45–11:15 or 13:30–14:30). Current: {now_time.strftime('%H:%M')}",
-            "confluence":    confluence_msg,
-            "score":         abs_score,
-            "factors":       factors,
-            "vix":           vix,
-            "pcr":           pcr_value,
-            "build":         atm_build,
-            "time_warning":  time_warning,
-            "is_expiry_day": is_expiry_day,
-            "oi_walls":      oi_walls,
-        }
-
+            time_warning = (time_warning or "") + "  🔔 Post 14:30: Closing session — verify before entry."
     # ── Momentum Confirmation — price must be on the correct side of Volume POC ──
     # vp_data contains: poc, vah, val, step — no open_price key available.
     # POC = price level with highest traded volume; spot > POC = bullish control.
