@@ -397,7 +397,7 @@ class AlertEngine:
             f"         Premium SELL karne ka accha mauka."
         )
         action = (
-            "Iron Condor ya Strangle SELL setup dekho.\n"
+            "Options SELL karne ka mauka — premium zyada mil raha hai.\n"
             "VIX bhi check karo — dono high ho toh best opportunity.\n"
             "Hedge zaroor rakho — naked selling risky hai."
         )
@@ -429,8 +429,11 @@ class AlertEngine:
         conf    = sig.get("confluence", "—")
         now_str = datetime.now().strftime("%H:%M")
 
-        sig_key = f"TRADE_{s}_{strike}_{datetime.now().strftime('%Y%m%d_%H%M')[:13]}"
-        if self._in_cooldown(sig_key.rsplit("_", 1)[0]):
+        # Cooldown key uses direction only (not strike) so ATM shift doesn't
+        # generate a second alert within the same 30-min window.
+        cooldown_key = f"TRADE_{s}_{datetime.now().strftime('%Y%m%d')}"
+        sig_key      = f"{cooldown_key}_{datetime.now().strftime('%H%M')}"
+        if self._in_cooldown(cooldown_key):
             return False
 
         if s == "BUY CE":
@@ -480,12 +483,12 @@ class AlertEngine:
 
         alert = TriggerAlert(
             time=now_str, category="URGENT",
-            signal_key=sig_key.rsplit("_", 1)[0],
+            signal_key=cooldown_key,
             title=f"{emoji} {s} SIGNAL — Strike {strike}",
             detail=detail, action=action, score=3,
         )
         if self.enabled and self.bot_token and self.chat_id:
-            self._mark_sent(alert.signal_key)
+            self._mark_sent(cooldown_key)
             self._send_telegram(alert)
             logger.info(f"Trade signal Telegram sent: {s} {strike}")
             return True
