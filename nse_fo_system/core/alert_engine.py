@@ -70,8 +70,10 @@ class AlertEngine:
         triggered: List[TriggerAlert] = []
 
         # Saare checkers run karo — None matlab signal nahi mila
+        # Note: UOA is NOT here — handled by send_uoa_alert() in live_data_section
+        # which has DB freshness check. _check_uoa here had no DB check so would
+        # re-fire the same old alert every 30 min even after cooldown expired.
         checkers = [
-            self._check_uoa(cache),
             self._check_gex_flip(gex_history, symbol),
             self._check_vix_spike(cache),
             self._check_pcr_extreme(cache),
@@ -432,7 +434,6 @@ class AlertEngine:
         # Cooldown key uses direction only (not strike) so ATM shift doesn't
         # generate a second alert within the same 30-min window.
         cooldown_key = f"TRADE_{s}_{datetime.now().strftime('%Y%m%d')}"
-        sig_key      = f"{cooldown_key}_{datetime.now().strftime('%H%M')}"
         if self._in_cooldown(cooldown_key):
             return False
 

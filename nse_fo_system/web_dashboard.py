@@ -2255,7 +2255,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
     closing_risk = dtime(15, 15) <= now_time < dtime(15, 31)
     time_warning = ""
     if opening_risk:
-        time_warning = "⚠️ 9:15-9:45 — High volatility window. Wait for 9:45 for cleaner signals."
+        time_warning = "⚠️ 9:15-9:45 — High volatility window. Verify signal carefully before entry."
     elif closing_risk:
         time_warning = "⚠️ Market closing soon (15:15–15:30) — avoid fresh entries."
 
@@ -3847,7 +3847,19 @@ def live_data_section(symbol, expiry):
         for _uoa in cache.get("uoa_alerts", []):
             _is_new = _snap_db.save_uoa_alert(_uoa) if _snap_db else False
             if _is_new and _uoa_eng is not None:
-                _uoa_eng.send_uoa_alert(_uoa)
+                sent = _uoa_eng.send_uoa_alert(_uoa)
+                if sent:
+                    # Add to alert_history so UI panel shows UOA alerts too
+                    from datetime import datetime as _dtnow
+                    _hist = st.session_state.get("alert_history", [])
+                    _is_bull = "BULL" in _uoa.sentiment
+                    _hist = [{
+                        "time":       _dtnow.now().strftime("%H:%M"),
+                        "category":   "URGENT" if _uoa.is_fire else "IMPORTANT",
+                        "title":      f"{'📈' if _is_bull else '📉'} UOA — {_uoa.symbol} {int(_uoa.strike)} {_uoa.opt_type} ({_uoa.mult:.1f}x)",
+                        "signal_key": f"UOA_{_uoa.symbol}_{_uoa.opt_type}_{int(_uoa.strike)}",
+                    }] + _hist
+                    st.session_state["alert_history"] = _hist[:20]
     except Exception as _ue:
         logger.error(f"UOA save/alert error: {_ue}")
 
