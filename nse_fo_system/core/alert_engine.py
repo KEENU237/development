@@ -76,14 +76,15 @@ class AlertEngine:
         alerts = engine.check_and_send(cache, symbol, gex_history)
     """
 
-    COOLDOWN_MINUTES = 0    # No cooldown — har 60 sec pe signal fire karega
+    COOLDOWN_MINUTES = 0    # Unused — change-detection logic handles dedup
 
     def __init__(self, bot_token: str = "", chat_id: str = "",
                  enabled: bool = False):
         self.bot_token = bot_token.strip() if bot_token else ""
         self.chat_id   = chat_id.strip()   if chat_id   else ""
         self.enabled   = enabled
-        self._last_sent: dict = {}   # signal_key → datetime of last send
+        self._last_sent: dict = {}   # signal_key → datetime (for UOA/event alerts)
+        self._state:     dict = {}   # signal_key → last sent state string (change-detection)
 
     # ── Public: main check function ───────────────────────────────────────────
 
@@ -300,6 +301,14 @@ class AlertEngine:
         if pcr <= 0:
             return None
 
+        # Change-detection: same PCR zone active hai toh dobara mat bhejo
+        current_zone = "BEAR" if pcr < 0.70 else ("BULL" if pcr > 1.30 else "")
+        if not current_zone:
+            self._mark_state("PCR", "")
+            return None
+        if not self._state_changed("PCR", current_zone):
+            return None
+
         if pcr < 0.70:
             zone    = "EXTREME BEARISH"
             emoji   = "📉"
@@ -335,6 +344,7 @@ class AlertEngine:
             f"NIFTY PCR : {pcr:.2f}  ({zone})  {emoji}\n"
             f"Matlab    : {meaning}"
         )
+        self._mark_state("PCR", current_zone)
         return TriggerAlert(
             time=datetime.now().strftime("%H:%M"),
             category="IMPORTANT",
@@ -413,6 +423,10 @@ class AlertEngine:
         iv_data = cache.get("iv_data", {})
         ivr     = iv_data.get("iv_rank", 0)
         if ivr < 70:
+            self._mark_state("IV", "")
+            return None
+        # Change-detection: IV rank high condition already alerted — skip
+        if not self._state_changed("IV", "HIGH"):
             return None
 
         atm_iv  = iv_data.get("atm_iv", 0)
@@ -429,6 +443,7 @@ class AlertEngine:
             "VIX bhi check karo — dono high ho toh best opportunity.\n"
             "Hedge zaroor rakho — naked selling risky hai."
         )
+        self._mark_state("IV", "HIGH")
         return TriggerAlert(
             time=datetime.now().strftime("%H:%M"),
             category="INFO",
@@ -446,7 +461,15 @@ class AlertEngine:
         Returns True if alert was sent.
         """
         s = sig.get("signal", "")
+
+        # Reset state when NO TRADE — next BUY CE/PE will fire fresh
         if s not in ("BUY CE", "BUY PE"):
+            self._mark_state("TRADE", "")
+            return False
+
+        # Change-detection: only send when signal changes (NO TRADE→BUY CE, or BUY PE→BUY CE etc.)
+        # If same signal is already active → skip (condition bani hui hai, ek baar bheja)
+        if not self._state_changed("TRADE", s):
             return False
 
         strike  = sig.get("strike", sig.get("sell_ce", ""))
@@ -456,12 +479,7 @@ class AlertEngine:
         iv_rank = sig.get("iv_rank", 0)
         conf    = sig.get("confluence", "—")
         now_str = datetime.now().strftime("%H:%M")
-
-        # Cooldown key uses direction only (not strike) so ATM shift doesn't
-        # generate a second alert within the same 30-min window.
-        cooldown_key = f"TRADE_{s}_{datetime.now().strftime('%Y%m%d')}"
-        if self._in_cooldown(cooldown_key):
-            return False
+        cooldown_key = f"TRADE_{s}"
 
         if s == "BUY CE":
             emoji   = "📈🟢"
@@ -515,7 +533,7 @@ class AlertEngine:
             detail=detail, action=action, score=3,
         )
         if self.enabled and self.bot_token and self.chat_id:
-            self._mark_sent(cooldown_key)
+            self._mark_state("TRADE", s)   # mark state BEFORE send — multi-tab safe
             self._send_telegram(alert)
             logger.info(f"Trade signal Telegram sent: {s} {strike}")
             return True
@@ -597,6 +615,25 @@ class AlertEngine:
         self._last_sent[signal_key] = now
         data = _read_cooldown_file()
         data[signal_key] = now.isoformat()
+        _write_cooldown_file(data)
+
+    def _state_changed(self, key: str, current: str) -> bool:
+        """True if current state is different from last sent state.
+        Multi-tab safe — reads from file."""
+        # Memory check
+        if self._state.get(key) != current:
+            # Confirm with file
+            data = _read_cooldown_file()
+            last = data.get(f"STATE_{key}", "")
+            self._state[key] = last  # sync memory from file
+            return last != current
+        return False
+
+    def _mark_state(self, key: str, value: str):
+        """State update — condition change ke baad save karo."""
+        self._state[key] = value
+        data = _read_cooldown_file()
+        data[f"STATE_{key}"] = value
         _write_cooldown_file(data)
 
     # ── Telegram sender ───────────────────────────────────────────────────────
