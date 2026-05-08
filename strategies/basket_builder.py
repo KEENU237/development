@@ -156,7 +156,13 @@ class BasketOrderBuilder:
             OrderLeg("SELL", otm_pe, otm_strike, "PE", lot_size, otm_ltp),
         ]
 
-        return BasketOrder("BEAR PUT SPREAD", symbol, legs, expiry)
+        order = BasketOrder("BEAR PUT SPREAD", symbol, legs, expiry)
+
+        if abs(order.net_premium) > RISK["max_capital_per_trade"]:
+            logger.warning(f"Risk limit exceed: Rs{abs(order.net_premium):,} > Rs{RISK['max_capital_per_trade']:,}")
+            return None
+
+        return order
 
     def build_iron_condor(self, symbol: str, expiry: str,
                            lot_size: int) -> Optional[BasketOrder]:
