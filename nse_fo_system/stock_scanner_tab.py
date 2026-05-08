@@ -283,12 +283,12 @@ def _prev_trading_day():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# IFS v3 SCORE
+# IFS v4 SCORE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
     """
-    IFS v3 — 6 pillars + 6 filters.
+    IFS v4 — 6 pillars + 7 filters + PDH/PDL + directional volume.
     Returns scored dict or None.
     """
     if today_df is None or len(today_df) < 4:
