@@ -8,6 +8,13 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from datetime import date
 
+# Underlying index LTP keys for Greeks spot-price lookup
+_UNDERLYING_LTP_MAP = {
+    "BANKNIFTY": "NSE:NIFTY BANK",
+    "FINNIFTY":  "NSE:NIFTY FIN SERVICE",
+    "NIFTY":     "NSE:NIFTY 50",
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +93,18 @@ class RiskManager:
 
         return snap
 
+    def _get_underlying_spot(self, tradingsymbol: str, fallback: float) -> float:
+        """Fetch underlying index spot price from tradingsymbol (e.g. NIFTY23DEC45000CE)."""
+        for underlying, ltp_key in _UNDERLYING_LTP_MAP.items():
+            if tradingsymbol.startswith(underlying):
+                try:
+                    prices = self.kite.get_ltp([ltp_key])
+                    spot = list(prices.values())[0] if prices else 0
+                    return float(spot) if spot > 0 else fallback
+                except Exception:
+                    return fallback
+        return fallback
+
     def _add_greeks(self, pos: dict, snap: PortfolioSnapshot) -> None:
         """Compute BS Greeks for one position and add to snapshot totals."""
         try:
@@ -104,8 +123,8 @@ class RiskManager:
             if T <= 0:
                 return
 
-            # Use LTP as proxy for underlying (simplified — avoids extra API call)
-            g = calc_greeks(S=float(strike), K=float(strike), T=T,
+            spot = self._get_underlying_spot(sym, float(strike))
+            g = calc_greeks(S=spot, K=float(strike), T=T,
                             sigma=0.15, opt_type=opt_type)
             if g:
                 snap.net_delta += g.delta * qty

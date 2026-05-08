@@ -194,7 +194,7 @@ class UOAScanner:
         """
         if key not in self._vol_history:
             self._vol_history[key] = [current_vol]
-            return current_vol if current_vol > 0 else 1
+            return 0  # First reading = baseline only; caller skips on avg_vol == 0
 
         history = self._vol_history[key]
 
