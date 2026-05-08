@@ -1,24 +1,25 @@
 """
-Intraday Stock Scanner — IFS v3.0
+Intraday Stock Scanner — IFS v4.0
 ==================================
-6-pillar score + 6 hard filters
+6-pillar score + 7 filters + market regime detection
 
 Pillars:
   P1 VWAP alignment          : ±2
-  P2 ORB breakout (2-candle) : ±3  ← v3: 2-candle confirmation
-  P3 Volume (prev-day base)  : 0–3
-  P4 9 EMA momentum          : ±2
+  P2 ORB breakout (2-candle) : ±3
+  P3 Volume directional      : ±3
+  P4 PDH/PDL breakout        : ±3
   P5 First candle bias       : ±1
   P6 Nifty alignment bonus   : ±1
-  Max: +12  Buy zone: ≥8  Sell zone: ≤-6
+  Max: ±13  Buy zone: ≥8  Sell zone: ≤-6
 
-Hard filters (v3 additions):
+Hard filters:
   1. Gap > 1.5%              → FILTERED
   2. VIX > 22                → BUY blocked
   3. ORB invalid range       → p2 = 0
   4. Nifty strong opposite   → downgrade
-  5. Sector index bearish    → BUY downgraded  ← NEW
-  6. Symbol in skip list     → FILTERED        ← NEW (result dates)
+  5. Sector index bearish    → BUY downgraded
+  6. Symbol in skip list     → FILTERED
+  7. Market Regime CHOPPY    → banner warning  ← NEW v4
 """
 
 import time
@@ -67,9 +68,25 @@ _SECTOR_STOCKS = {
     ],
     "NIFTY PHARMA": [
         "SUNPHARMA", "DIVISLAB", "DRREDDY", "CIPLA", "TORNTPHARM", "LUPIN",
+        "APOLLOHOSP",
     ],
     "NIFTY AUTO": [
         "MARUTI", "TATAMOTORS", "EICHERMOT", "HEROMOTOCO",
+    ],
+    "NIFTY FMCG": [
+        "HINDUNILVR", "ITC", "BRITANNIA", "TATACONSUM", "GODREJCP",
+        "DABUR", "MARICO", "COLPAL", "EMAMILTD",
+    ],
+    "NIFTY METAL": [
+        "TATASTEEL", "HINDALCO", "JSWSTEEL", "NMDC", "SAIL",
+    ],
+    "NIFTY ENERGY": [
+        "ONGC", "BPCL", "COALINDIA", "TATAPOWER", "NHPC",
+        "ADANIGREEN", "TORNTPOWER",
+    ],
+    "NIFTY INFRA": [
+        "LT", "SIEMENS", "POWERGRID", "NTPC", "RECLTD", "PFC",
+        "ADANIENT", "ADANIPORTS", "CONCOR", "IRCTC",
     ],
 }
 # Reverse: symbol → sector index name
@@ -192,6 +209,35 @@ def _trend_from_df(df):
             "price": round(price, 2), "vwap": round(vwap, 2)}
 
 
+def _market_regime(df):
+    """
+    Nifty ke pehle 30 min (6 candles of 5-min) se market regime detect karo.
+    Returns: dict with regime, move_pct, range_pct
+    """
+    if df is None or len(df) < 4:
+        return {"regime": "UNKNOWN", "move_pct": 0.0, "range_pct": 0.0}
+
+    first_30  = df.head(6)
+    open_px   = float(first_30.iloc[0]["open"])
+    close_30  = float(first_30.iloc[-1]["close"])
+    high_30   = float(first_30["high"].max())
+    low_30    = float(first_30["low"].min())
+
+    move_pct  = round((close_30 - open_px) / open_px * 100, 2)
+    range_pct = round((high_30  - low_30)  / open_px * 100, 2)
+
+    if range_pct < 0.3:
+        regime = "CHOPPY"
+    elif move_pct >= 0.5:
+        regime = "TRENDING_BULL"
+    elif move_pct <= -0.5:
+        regime = "TRENDING_BEAR"
+    else:
+        regime = "NEUTRAL"
+
+    return {"regime": regime, "move_pct": move_pct, "range_pct": range_pct}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_trends(_kite, tokens_json, today_str):
     """
@@ -210,7 +256,8 @@ def _fetch_trends(_kite, tokens_json, today_str):
     # Nifty
     nifty_tok = tokens.get("__NIFTY__", 256265)
     df = _fetch(_kite, nifty_tok, from_dt, to_dt)
-    trends["__NIFTY__"] = _trend_from_df(df)
+    trends["__NIFTY__"]  = _trend_from_df(df)
+    trends["__REGIME__"] = _market_regime(df)
 
     # Sectors
     for key, tok in tokens.items():
@@ -460,7 +507,7 @@ def _trend_badge(d):
 
 def render_stock_scanner(kite=None):
     st.markdown("## 📡 Intraday Stock Scanner")
-    st.caption("IFS v3.0 · 6-Pillar · 2-Candle ORB · Sector Filter · Result Skip · Nifty 100")
+    st.caption("IFS v4.0 · PDH/PDL · Directional Vol · Market Regime · 8 Sectors · 2-Candle ORB")
 
     if kite is None or not kite.is_connected():
         st.error("❌ Zerodha Kite connected nahi. Token refresh karo.")
@@ -488,7 +535,8 @@ def render_stock_scanner(kite=None):
     import json
     tokens_json  = json.dumps(tokens)
     all_trends   = _fetch_trends(kite_obj, tokens_json, today_str)
-    nifty_trend  = all_trends.get("__NIFTY__", {"dir": "NEUTRAL", "score": 0, "price": 0, "vwap": 0})
+    nifty_trend  = all_trends.get("__NIFTY__",  {"dir": "NEUTRAL", "score": 0, "price": 0, "vwap": 0})
+    regime       = all_trends.get("__REGIME__", {"regime": "UNKNOWN", "move_pct": 0, "range_pct": 0})
     vix_val      = _vix(kite_obj)
 
     # ── Context strip ─────────────────────────────────────────────────────────
@@ -515,20 +563,38 @@ def render_stock_scanner(kite=None):
         f"<small>Nifty VWAP</small><br><b>₹{nifty_trend['vwap']:,.0f}</b></div>",
         unsafe_allow_html=True)
 
-    # Sector trends strip
+    # Sector trends strip — 2 rows of 4
     st.markdown("")
-    sec_cols = st.columns(len(_SECTOR_STOCKS))
-    for col, sec_name in zip(sec_cols, _SECTOR_STOCKS):
-        key = f"__SEC__{sec_name}"
-        t   = all_trends.get(key, {"dir": "NEUTRAL"})
-        label = sec_name.replace("NIFTY ", "")
-        col.markdown(
-            f"<div style='padding:6px;background:#fafafa;border-radius:5px;text-align:center'>"
-            f"<small>{label}</small><br>"
-            f"{_trend_badge(t['dir'])}</div>",
-            unsafe_allow_html=True)
+    sec_names = list(_SECTOR_STOCKS.keys())
+    for row_start in range(0, len(sec_names), 4):
+        row_secs = sec_names[row_start:row_start + 4]
+        sec_cols = st.columns(4)
+        for col, sec_name in zip(sec_cols, row_secs):
+            key   = f"__SEC__{sec_name}"
+            t     = all_trends.get(key, {"dir": "NEUTRAL"})
+            label = sec_name.replace("NIFTY ", "")
+            col.markdown(
+                f"<div style='padding:6px;background:#fafafa;border-radius:5px;text-align:center'>"
+                f"<small>{label}</small><br>"
+                f"{_trend_badge(t['dir'])}</div>",
+                unsafe_allow_html=True)
 
     st.markdown("")
+
+    # ── Market Regime Banner ──────────────────────────────────────────────────
+    r = regime["regime"]
+    if r == "CHOPPY":
+        st.error(
+            f"⚠️ CHOPPY MARKET — Nifty pehle 30 min mein sideways raha "
+            f"(Range: {regime['range_pct']}%). Scanner signals aaj unreliable hain.")
+    elif r == "TRENDING_BULL":
+        st.success(
+            f"✅ TRENDING BULL — Nifty strong bullish opening "
+            f"(+{regime['move_pct']}%). BUY setups aaj reliable hain.")
+    elif r == "TRENDING_BEAR":
+        st.warning(
+            f"📉 TRENDING BEAR — Nifty strong bearish opening "
+            f"({regime['move_pct']}%). SELL setups aaj reliable hain.")
 
     # Alert banners
     if nifty_trend["dir"] == "BEARISH" and vix_val > VIX_LIMIT:
