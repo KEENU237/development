@@ -3551,11 +3551,33 @@ def _render_alert_history():
         )
 
     with st.expander(f"🔔 Recent Alerts ({len(history)})", expanded=False):
-        st.markdown(
-            f"<div style='margin-bottom:8px'>{telegram_status}</div>"
-            f"{rows_html}",
+        tg_col, btn_col = st.columns([3, 1])
+        tg_col.markdown(
+            f"<div style='margin-bottom:8px'>{telegram_status}</div>",
             unsafe_allow_html=True,
         )
+        # Test button — verify bot token works
+        engine = st.session_state.get("alert_engine")
+        if engine and engine.enabled and btn_col.button("📤 Test Telegram", key="tg_test"):
+            from core.alert_engine import TriggerAlert
+            from datetime import datetime as _dt
+            test_alert = TriggerAlert(
+                time=_dt.now().strftime("%H:%M"),
+                category="INFO",
+                signal_key="TELEGRAM_TEST",
+                title="✅ Telegram Test — Connection OK!",
+                detail=(
+                    f"Dashboard se test message bheja gaya.\n"
+                    f"Time: {_dt.now().strftime('%d-%b-%Y %H:%M:%S')}\n"
+                    f"Agar yeh message mila toh Telegram connected hai."
+                ),
+                action="Koi action needed nahi — yeh sirf test tha.",
+                score=0,
+            )
+            engine._send_telegram(test_alert)
+            st.success("Test message bhej diya! Telegram check karo.")
+        if rows_html:
+            st.markdown(rows_html, unsafe_allow_html=True)
 
 
 
