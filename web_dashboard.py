@@ -3643,7 +3643,8 @@ def live_data_section(symbol, expiry):
         _uoa_eng  = st.session_state.get("alert_engine")
         for _uoa in cache.get("uoa_alerts", []):
             _is_new = _snap_db.save_uoa_alert(_uoa) if _snap_db else False
-            if _is_new and _uoa_eng is not None:
+            # Telegram sirf 5x+ FIRE pe — 2x sirf dashboard mein dikhta hai
+            if _is_new and _uoa_eng is not None and _uoa.is_fire:
                 _uoa_eng.send_uoa_alert(_uoa)
     except Exception as _ue:
         logger.error(f"UOA save/alert error: {_ue}")
