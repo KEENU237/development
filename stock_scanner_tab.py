@@ -760,6 +760,24 @@ def render_stock_scanner(kite=None, alert_engine=None):
                 if r["signal"] in ("STRONG BUY", "STRONG SELL"):
                     alert_engine.send_stock_signal(r)
 
+    # ── Auto-scan timer — results ke PEHLE, warna early return timer rok deta hai
+    if st.session_state.get("sc_auto_enabled", False):
+        AUTO_INTERVAL = 300  # 5 minutes
+        last_ts   = st.session_state.get("sc_last_auto_ts", 0)
+        elapsed   = time.time() - last_ts
+        remaining = int(AUTO_INTERVAL - elapsed)
+
+        if remaining <= 0:
+            st.session_state["sc_auto_trigger"]  = True
+            st.session_state["sc_last_auto_ts"]  = time.time()
+            st.rerun()
+        else:
+            mins = remaining // 60
+            secs = remaining % 60
+            st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
+            time.sleep(5 if remaining <= 60 else 15)
+            st.rerun()
+
     # ── Display ───────────────────────────────────────────────────────────────
     results   = st.session_state.get("sc_results", [])
     scan_time = st.session_state.get("sc_time", "")
@@ -863,23 +881,3 @@ def render_stock_scanner(kite=None, alert_engine=None):
         f"Sell≤{SELL_ZONE} · Strong Sell≤{SELL_ZONE-2}"
     )
 
-    # ── Auto-scan timer ───────────────────────────────────────────────────────
-    if st.session_state.get("sc_auto_enabled", False):
-        AUTO_INTERVAL = 300   # 5 minutes
-        last_ts  = st.session_state.get("sc_last_auto_ts", 0)
-        elapsed  = time.time() - last_ts
-        remaining = int(AUTO_INTERVAL - elapsed)
-
-        if remaining <= 0:
-            # 6 min ho gaye — trigger scan on next render
-            st.session_state["sc_auto_trigger"]  = True
-            st.session_state["sc_last_auto_ts"]  = time.time()
-            st.rerun()
-        else:
-            mins = remaining // 60
-            secs = remaining % 60
-            st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
-            # Countdown: 15 sec intervals (5 sec jab 1 min bacha ho)
-            sleep_for = 5 if remaining <= 60 else 15
-            time.sleep(sleep_for)
-            st.rerun()
