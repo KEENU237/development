@@ -780,7 +780,8 @@ def _calc_gex(symbol: str, expiry: str, cache: dict) -> dict:
     sigma   = max(atm_iv, vix, 8.0) / 100.0   # never below 8%
 
     lot     = get_lot_size(symbol)
-    step    = 50 if symbol == "NIFTY" else 100
+    # BUG-FIX: FINNIFTY has 50-point strike intervals (same as NIFTY), not 100
+    step    = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}.get(symbol, 50)
 
     gex_strikes  = {}   # strike → net_gex
     total_ce_gex = 0.0
@@ -1117,7 +1118,8 @@ def _calc_expected_move(iv_data: dict, cache: dict, symbol: str) -> dict:
     if not spot or not oi_chain:
         return {}
 
-    step = 50 if symbol == "NIFTY" else 100
+    # BUG-FIX: FINNIFTY has 50-point strike intervals (same as NIFTY), not 100
+    step = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}.get(symbol, 50)
     atm  = round(spot / step) * step
 
     ce_ltp = pe_ltp = 0
@@ -2296,7 +2298,8 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         }
 
     score     = 0
-    step      = 50 if symbol == "NIFTY" else 100
+    # BUG-FIX: FINNIFTY has 50-point strike intervals (same as NIFTY), not 100
+    step      = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}.get(symbol, 50)
     atm       = round(spot / step) * step
     lot       = get_lot_size(symbol)
     MAX_LOSS  = 3000   # ₹3000 max risk per trade
@@ -3340,14 +3343,16 @@ def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
                 col_r, col_s = st.columns(2)
                 with col_r:
                     st.markdown("**🧱 Resistance**")
+                    _cw_max = max((w[1] for w in call_walls), default=0) or 0.1  # BUG-FIX: ZeroDivisionError if all OI < 50k
                     for i, (strike, oi_l) in enumerate(call_walls):
-                        bar_len = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
+                        bar_len = int(min(oi_l / _cw_max * 10, 10))
                         bar = "█" * bar_len + "░" * (10 - bar_len)
                         st.markdown(f"`{strike}` 🟠 `{bar}` **{oi_l}L**")
                 with col_s:
                     st.markdown("**🛡️ Support**")
+                    _pw_max = max((w[1] for w in put_walls), default=0) or 0.1  # BUG-FIX: ZeroDivisionError guard
                     for i, (strike, oi_l) in enumerate(put_walls):
-                        bar_len = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
+                        bar_len = int(min(oi_l / _pw_max * 10, 10))
                         bar = "█" * bar_len + "░" * (10 - bar_len)
                         st.markdown(f"`{strike}` 🟢 `{bar}` **{oi_l}L**")
 
@@ -3448,15 +3453,17 @@ def render_trade_signal(cache: dict, symbol: str, precomputed: dict = None):
                 col_r, col_s = st.columns(2)
                 with col_r:
                     st.markdown("**🧱 Resistance**")
+                    _cw_max2 = max((w[1] for w in call_walls), default=0) or 0.1  # BUG-FIX: ZeroDivisionError guard
                     for i, (strike, oi_l) in enumerate(call_walls):
-                        bar_len   = int(min(oi_l / max(w[1] for w in call_walls) * 10, 10))
+                        bar_len   = int(min(oi_l / _cw_max2 * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
                         tag       = " ← ⚠️" if (i == 0 and is_buy_ce) else ""
                         st.markdown(f"`{strike}` {'🔴' if (i==0 and is_buy_ce) else '🟠'} `{bar}` **{oi_l}L**{tag}")
                 with col_s:
                     st.markdown("**🛡️ Support**")
+                    _pw_max2 = max((w[1] for w in put_walls), default=0) or 0.1  # BUG-FIX: ZeroDivisionError guard
                     for i, (strike, oi_l) in enumerate(put_walls):
-                        bar_len   = int(min(oi_l / max(w[1] for w in put_walls) * 10, 10))
+                        bar_len   = int(min(oi_l / _pw_max2 * 10, 10))
                         bar       = "█" * bar_len + "░" * (10 - bar_len)
                         tag       = " ← ⚠️" if (i == 0 and not is_buy_ce) else ""
                         st.markdown(f"`{strike}` {'🔴' if (i==0 and not is_buy_ce) else '🟢'} `{bar}` **{oi_l}L**{tag}")
