@@ -284,13 +284,26 @@ def _prev_trading_day():
     return d
 
 
+def _trading_days_ago(n):
+    """n trading days pehle ka date return karo (weekends skip)."""
+    d = date.today()
+    count = 0
+    while count < n:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            count += 1
+    return d
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # IFS v4 SCORE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
+def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
+         hist_df=None):
     """
     IFS v4 — 6 pillars + 7 filters + PDH/PDL + directional volume.
+    hist_df: last 5 trading days data (volume baseline ke liye).
     Returns scored dict or None.
     """
     if today_df is None or len(today_df) < 4:
@@ -315,8 +328,10 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
     vwap_val = float(df["vwap"].iloc[-1])
     cur_vol  = float(df["volume"].iloc[-1])
 
-    # Volume baseline — previous day
-    if prev_df is not None and len(prev_df) >= 20:
+    # Volume baseline — 5-day average if available, else previous day, else today
+    if hist_df is not None and len(hist_df) >= 20:
+        avg_vol = float(hist_df["volume"].mean())
+    elif prev_df is not None and len(prev_df) >= 20:
         avg_vol = float(prev_df["volume"].mean())
     else:
         avg_vol = float(df["volume"].mean())
@@ -645,10 +660,11 @@ def render_stock_scanner(kite=None):
 
     # ── Scan ──────────────────────────────────────────────────────────────────
     if run:
-        prev_day = _prev_trading_day()
-        from_dt  = datetime(prev_day.year, prev_day.month, prev_day.day, 9, 15)
-        to_dt    = now
-        today    = date.today()
+        prev_day      = _prev_trading_day()
+        hist_start    = _trading_days_ago(5)
+        hist_from_dt  = datetime(hist_start.year, hist_start.month, hist_start.day, 9, 15)
+        to_dt         = now
+        today         = date.today()
 
         prog     = st.progress(0, text="Starting scan...")
         results  = []
@@ -664,18 +680,21 @@ def render_stock_scanner(kite=None):
                     "symbol": sym, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
                     "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
                     "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0,
-                    "orb_rng": 0, "filters": ["Result date / manual skip"],
+                    "orb_rng": 0, "pdh": 0, "pdl": 0, "rs_alpha": 0,
+                    "filters": ["Result date / manual skip"],
                     "sector": STOCK_SECTOR.get(sym, "Other"),
-                    "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0,
+                    "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
                 })
                 continue
 
-            df2 = _fetch(kite_obj, tok, from_dt, to_dt)
+            df2 = _fetch(kite_obj, tok, hist_from_dt, to_dt)
             if df2 is not None and len(df2) >= 6:
                 today_df = df2[df2["date"].dt.date == today].copy().reset_index(drop=True)
                 prev_df  = df2[df2["date"].dt.date == prev_day].copy().reset_index(drop=True)
+                hist_df  = df2[df2["date"].dt.date < today].copy().reset_index(drop=True)
                 r = _ifs(today_df, prev_df, sym,
-                         nifty_trend, all_trends, vix_val, skip_list)
+                         nifty_trend, all_trends, vix_val, skip_list,
+                         hist_df=hist_df)
                 if r:
                     results.append(r)
             time.sleep(0.08)
