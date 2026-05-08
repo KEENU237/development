@@ -95,12 +95,15 @@ class TickerManager:
         while True:
             try:
                 self._connect()
+                # _connect() blocks until WS closes — if it ran long, connection was good
+                # BUG-FIX: reset backoff after any successful connection
+                delay = self._reconnect_delay
             except Exception as exc:
                 logger.error(f"Ticker connection error: {exc}")
             self._connected = False
             logger.info(f"Ticker reconnecting in {delay}s ...")
             time.sleep(delay)
-            delay = min(delay * 2, self._max_delay)
+            delay = min(delay * 2, self._max_delay)   # only grows on repeated failures
 
     def _connect(self) -> None:
         from kiteconnect import KiteTicker

@@ -86,18 +86,51 @@ class PCRTracker:
             self._prev_oi = {}
 
     def _save_prev_oi(self):
-        """OI snapshot disk pe save karo — next restart ke liye."""
+        """
+        OI snapshot disk pe save karo — next restart ke liye.
+        BUG-FIX: Throttle to max once every 5 minutes.
+        Was writing on every OI chain fetch (every 15 sec) — caused slow I/O
+        and potential pickle corruption when 2 symbols fetched simultaneously.
+        """
+        import time
+        now = time.time()
+        if now - getattr(self, "_last_oi_save", 0) < 300:   # 5 min cooldown
+            return
         try:
             os.makedirs(os.path.dirname(_PREV_OI_FILE), exist_ok=True)
             with open(_PREV_OI_FILE, "wb") as f:
                 pickle.dump(self._prev_oi, f)
+            self._last_oi_save = now
         except Exception as e:
             logger.warning(f"prev_oi save failed: {e}")
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
+    # WebSocket instrument tokens (same as web_dashboard._SPOT_TOKENS)
+    _WS_TOKENS = {
+        "NSE:NIFTY 50":          256265,
+        "NSE:NIFTY BANK":        260105,
+        "NSE:NIFTY FIN SERVICE": 257801,
+        "NSE:INDIA VIX":         264969,
+    }
+
     def _get_spot(self, symbol: str) -> float:
         ltp_key = _SYM_LTP.get(symbol, f"NSE:{symbol}")
+
+        # BUG-FIX: Try WebSocket memory first (zero latency, no API cost)
+        try:
+            import streamlit as st
+            _ticker = st.session_state.get("ticker")
+            if _ticker and _ticker.is_connected():
+                tok = self._WS_TOKENS.get(ltp_key, 0)
+                if tok:
+                    ltp = _ticker.get_ltp(tok)
+                    if ltp and ltp > 0:
+                        return float(ltp)
+        except Exception:
+            pass
+
+        # REST fallback
         try:
             return self.kite.get_ltp([ltp_key]).get(ltp_key, 0)
         except Exception:

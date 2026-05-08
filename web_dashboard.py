@@ -339,8 +339,8 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
 
     def _fetch_pcr(sym):
         try:
-            # Use pre-computed expiry — avoids kite.instruments() inside thread
-            sym_exp = _nifty_exp if sym == "NIFTY" else _bnk_exp
+            # BUG-FIX: use per-symbol expiry — previously FINNIFTY got BANKNIFTY's expiry
+            sym_exp = _sym_expiries.get(sym, expiry)
             return sym, pcr_obj.get_pcr(sym, sym_exp)
         except Exception as exc:
             logger.error(f"PCR {sym}: {exc}")
@@ -408,12 +408,14 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     # ── Run all in parallel ───────────────────────────────────────────────────
     TIMEOUT = 20   # seconds — agar koi thread hang kare toh 20s baad skip
 
+    # BUG-FIX: fetch PCR for current symbol too (FINNIFTY was always "No data")
+    _pcr_syms = list({"NIFTY", "BANKNIFTY", symbol})  # deduplicated
+
     with ThreadPoolExecutor(max_workers=12) as ex:
         f_prices      = ex.submit(_fetch_prices)
         f_oi          = ex.submit(_fetch_oi_chain)
         f_mp          = ex.submit(_fetch_max_pain)
-        f_pcr_n       = ex.submit(_fetch_pcr, "NIFTY")
-        f_pcr_bn      = ex.submit(_fetch_pcr, "BANKNIFTY")
+        f_pcr_futures = {s: ex.submit(_fetch_pcr, s) for s in _pcr_syms}
         f_uoa         = ex.submit(_fetch_uoa)
         f_risk        = ex.submit(_fetch_risk)
         f_vp          = ex.submit(_fetch_vp)
@@ -439,9 +441,10 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     cache["risk_alerts"]= risk_result[1]
 
     # PCR trend tracking (session_state write — thread ke bahar karo)
+    # BUG-FIX: now handles NIFTY + BANKNIFTY + current symbol (e.g. FINNIFTY)
     pcr_data = {}
-    for fut in [f_pcr_n, f_pcr_bn]:
-        sym, r = _safe(fut, ("UNKNOWN", None))
+    for sym, fut in f_pcr_futures.items():
+        _, r = _safe(fut, (sym, None))
         if r:
             prev  = st.session_state["prev_pcr"].get(sym)
             trend = ""
@@ -490,6 +493,7 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
     cache["other_cache"] = _other_mini
 
     cache["fetched_at"] = datetime.now().strftime("%H:%M:%S")
+    cache["expiry"]     = expiry          # BUG-FIX: expiry day check needs this
     return cache
 
 
@@ -598,38 +602,47 @@ def _calc_iv_rank(symbol: str, current_iv: float) -> float:
     """
     Real IV Rank = (Current IV - 52-week Low) / (52-week High - 52-week Low) × 100
     History daily iv_history.json mein store hota hai (max 252 entries per symbol).
+
+    BUG-FIX: Only write to disk ONCE per symbol per day (was writing every 15 sec).
+    In-memory cache in session_state to avoid repeated file I/O.
     """
     import json
     from datetime import date
 
     iv_file = os.path.join(ROOT, "data", "iv_history.json")
+    today   = date.today().isoformat()
 
-    # Load history
-    try:
-        with open(iv_file, "r") as f:
-            history = json.load(f)
-    except Exception:
-        history = {}
+    # ── In-memory cache to avoid file read every 15 sec ──────────────────────
+    _iv_mem_key = f"_iv_hist_mem"
+    history = st.session_state.get(_iv_mem_key)
+    if history is None:
+        try:
+            with open(iv_file, "r") as f:
+                history = json.load(f)
+        except Exception:
+            history = {}
+        st.session_state[_iv_mem_key] = history
 
-    # Save today's IV snapshot
-    today = date.today().isoformat()
     if symbol not in history:
         history[symbol] = {}
+
+    # ── Only write to disk if today's value changed (not already saved today) ─
+    prev_today = history[symbol].get(today)
     history[symbol][today] = round(current_iv, 2)
 
-    # Keep only last 252 trading days (1 year)
-    sorted_dates = sorted(history[symbol].keys())
-    if len(sorted_dates) > 252:
-        for old in sorted_dates[:-252]:
-            del history[symbol][old]
-
-    # Save updated history
-    try:
-        os.makedirs(os.path.dirname(iv_file), exist_ok=True)
-        with open(iv_file, "w") as f:
-            json.dump(history, f)
-    except Exception:
-        pass
+    if prev_today != history[symbol][today]:
+        # Keep only last 252 trading days (1 year)
+        sorted_dates = sorted(history[symbol].keys())
+        if len(sorted_dates) > 252:
+            for old in sorted_dates[:-252]:
+                del history[symbol][old]
+        try:
+            os.makedirs(os.path.dirname(iv_file), exist_ok=True)
+            with open(iv_file, "w") as f:
+                json.dump(history, f)
+        except Exception:
+            pass
+        st.session_state[_iv_mem_key] = history
 
     # Calculate rank from available history
     iv_values = list(history[symbol].values())
