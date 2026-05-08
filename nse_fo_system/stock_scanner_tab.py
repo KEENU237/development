@@ -754,12 +754,11 @@ def render_stock_scanner(kite=None, alert_engine=None):
         st.session_state["sc_skip_used"]    = list(skip_list)
         st.session_state["sc_last_auto_ts"] = time.time()  # timer reset
 
-        # ── Telegram alerts for BUY / SELL signals ───────────────────────────
+        # ── Telegram alerts for STRONG signals only ──────────────────────────
         if alert_engine is not None:
-            signals = [r for r in results
-                       if r["signal"] in ("BUY", "STRONG BUY", "SELL", "STRONG SELL")]
-            for r in signals:
-                alert_engine.send_stock_signal(r)
+            for r in results:
+                if r["signal"] in ("STRONG BUY", "STRONG SELL"):
+                    alert_engine.send_stock_signal(r)
 
     # ── Display ───────────────────────────────────────────────────────────────
     results   = st.session_state.get("sc_results", [])
