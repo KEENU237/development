@@ -698,9 +698,9 @@ def render_stock_scanner(kite=None, alert_engine=None):
         run = st.button("🔍  Run Scanner", type="primary", use_container_width=True)
     with auto_col:
         auto_scan = st.checkbox(
-            "🔄 Auto (6 min)",
+            "🔄 Auto (5 min)",
             value=st.session_state.get("sc_auto_enabled", False),
-            help="Har 6 minute mein scanner automatically run hoga aur STRONG signals pe Telegram jaayega",
+            help="Har 5 minute mein scanner automatically run hoga aur BUY/SELL signals pe Telegram jaayega",
         )
         st.session_state["sc_auto_enabled"] = auto_scan
 
@@ -754,10 +754,11 @@ def render_stock_scanner(kite=None, alert_engine=None):
         st.session_state["sc_skip_used"]    = list(skip_list)
         st.session_state["sc_last_auto_ts"] = time.time()  # timer reset
 
-        # ── Telegram alerts for STRONG signals ───────────────────────────────
+        # ── Telegram alerts for BUY / SELL signals ───────────────────────────
         if alert_engine is not None:
-            strong = [r for r in results if r["signal"] in ("STRONG BUY", "STRONG SELL")]
-            for r in strong:
+            signals = [r for r in results
+                       if r["signal"] in ("BUY", "STRONG BUY", "SELL", "STRONG SELL")]
+            for r in signals:
                 alert_engine.send_stock_signal(r)
 
     # ── Display ───────────────────────────────────────────────────────────────
@@ -865,7 +866,7 @@ def render_stock_scanner(kite=None, alert_engine=None):
 
     # ── Auto-scan timer ───────────────────────────────────────────────────────
     if st.session_state.get("sc_auto_enabled", False):
-        AUTO_INTERVAL = 360   # 6 minutes
+        AUTO_INTERVAL = 300   # 5 minutes
         last_ts  = st.session_state.get("sc_last_auto_ts", 0)
         elapsed  = time.time() - last_ts
         remaining = int(AUTO_INTERVAL - elapsed)
