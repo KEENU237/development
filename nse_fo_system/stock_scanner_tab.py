@@ -693,7 +693,19 @@ def render_stock_scanner(kite=None, alert_engine=None):
     )
     skip_list = {s.strip().upper() for s in skip_input.split(",") if s.strip()}
 
-    run = st.button("🔍  Run Scanner", type="primary", use_container_width=True)
+    btn_col, auto_col = st.columns([3, 1])
+    with btn_col:
+        run = st.button("🔍  Run Scanner", type="primary", use_container_width=True)
+    with auto_col:
+        auto_scan = st.checkbox(
+            "🔄 Auto (6 min)",
+            value=st.session_state.get("sc_auto_enabled", False),
+            help="Har 6 minute mein scanner automatically run hoga aur STRONG signals pe Telegram jaayega",
+        )
+        st.session_state["sc_auto_enabled"] = auto_scan
+
+    # Auto-scan timer trigger
+    run = run or st.session_state.pop("sc_auto_trigger", False)
 
     # ── Scan ──────────────────────────────────────────────────────────────────
     if run:
@@ -737,9 +749,10 @@ def render_stock_scanner(kite=None, alert_engine=None):
             time.sleep(0.35)  # Zerodha historical API: max ~3 req/sec
 
         prog.empty()
-        st.session_state["sc_results"]   = results
-        st.session_state["sc_time"]      = now.strftime("%H:%M:%S")
-        st.session_state["sc_skip_used"] = list(skip_list)
+        st.session_state["sc_results"]      = results
+        st.session_state["sc_time"]         = now.strftime("%H:%M:%S")
+        st.session_state["sc_skip_used"]    = list(skip_list)
+        st.session_state["sc_last_auto_ts"] = time.time()  # timer reset
 
         # ── Telegram alerts for STRONG signals ───────────────────────────────
         if alert_engine is not None:
@@ -849,3 +862,24 @@ def render_stock_scanner(kite=None, alert_engine=None):
         f"Max±15 · Strong Buy≥{BUY_ZONE+2} · Buy≥{BUY_ZONE} · "
         f"Sell≤{SELL_ZONE} · Strong Sell≤{SELL_ZONE-2}"
     )
+
+    # ── Auto-scan timer ───────────────────────────────────────────────────────
+    if st.session_state.get("sc_auto_enabled", False):
+        AUTO_INTERVAL = 360   # 6 minutes
+        last_ts  = st.session_state.get("sc_last_auto_ts", 0)
+        elapsed  = time.time() - last_ts
+        remaining = int(AUTO_INTERVAL - elapsed)
+
+        if remaining <= 0:
+            # 6 min ho gaye — trigger scan on next render
+            st.session_state["sc_auto_trigger"]  = True
+            st.session_state["sc_last_auto_ts"]  = time.time()
+            st.rerun()
+        else:
+            mins = remaining // 60
+            secs = remaining % 60
+            st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
+            # Countdown: 15 sec intervals (5 sec jab 1 min bacha ho)
+            sleep_for = 5 if remaining <= 60 else 15
+            time.sleep(sleep_for)
+            st.rerun()
