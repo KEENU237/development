@@ -491,6 +491,71 @@ class AlertEngine:
             return True
         return False
 
+    def send_stock_signal(self, result: dict) -> bool:
+        """
+        Stock scanner STRONG BUY / STRONG SELL pe Telegram alert bhejo.
+        result = _ifs() ka return dict.
+        Returns True if alert was sent.
+        """
+        sig    = result.get("signal", "")
+        symbol = result.get("symbol", "")
+        score  = result.get("score", 0)
+
+        if sig not in ("STRONG BUY", "STRONG SELL"):
+            return False
+
+        sig_key = f"STOCK_{sig.replace(' ', '_')}_{symbol}"
+        if self._in_cooldown(sig_key):
+            return False
+
+        is_bull   = sig == "STRONG BUY"
+        emoji     = "📈🟢" if is_bull else "📉🔴"
+        entry     = result.get("entry", 0)
+        stop      = result.get("stop",  0)
+        target    = result.get("target", 0)
+        vol       = result.get("vol_ratio", 0)
+        rs        = result.get("rs_alpha", 0)
+        sector    = result.get("sector", "—")
+
+        entry_line = (
+            f"\nEntry  : ₹{entry:,.1f}  SL: ₹{stop:,.1f}  Target: ₹{target:,.1f}"
+            if entry > 0 else ""
+        )
+        detail = (
+            f"Symbol : {symbol}  ({sector})\n"
+            f"Price  : ₹{result.get('price', 0):,.1f}  vs VWAP: ₹{result.get('vwap', 0):,.1f}\n"
+            f"Score  : {score}/±15  ({sig})\n"
+            f"Volume : {vol:.1f}x avg  |  RS vs Nifty: {rs:+.1f}%"
+            f"{entry_line}"
+        )
+        p_breakdown = (
+            f"P1:{result.get('p1',0):+d} P2:{result.get('p2',0):+d} "
+            f"P3:{result.get('p3',0):+d} P4:{result.get('p4',0):+d} "
+            f"P5:{result.get('p5',0):+d} P6:{result.get('p6',0):+d} "
+            f"P7:{result.get('p7',0):+d}"
+        )
+        action = (
+            f"Dashboard > Stock Scanner tab mein {symbol} check karo.\n"
+            f"PDH: ₹{result.get('pdh', 0):,.1f}  PDL: ₹{result.get('pdl', 0):,.1f}\n"
+            f"{p_breakdown}"
+        )
+
+        tg_alert = TriggerAlert(
+            time=datetime.now().strftime("%H:%M"),
+            category="URGENT",
+            signal_key=sig_key,
+            title=f"{emoji} {sig} — {symbol}  (Score: {score})",
+            detail=detail,
+            action=action,
+            score=3,
+        )
+        if self.enabled and self.bot_token and self.chat_id:
+            self._mark_sent(sig_key)
+            self._send_telegram(tg_alert)
+            logger.info(f"Stock signal Telegram sent: {sig} {symbol} score={score}")
+            return True
+        return False
+
     def send_uoa_alert(self, alert) -> bool:
         """
         UOA alert aane pe Telegram bhejo — NIFTY aur BANKNIFTY dono ke liye.
