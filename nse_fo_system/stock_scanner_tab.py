@@ -328,11 +328,16 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
         else:
             p2 = 0
 
-    # ── P3 Volume ─────────────────────────────────────────────────────────────
-    if   vol_ratio >= 3.0: p3 = 3
-    elif vol_ratio >= 2.0: p3 = 2
-    elif vol_ratio >= 1.5: p3 = 1
-    else:                  p3 = 0
+    # ── P3 Volume (directional) ───────────────────────────────────────────────
+    # Magnitude: kitna unusual volume hai
+    if   vol_ratio >= 3.0: p3_mag = 3
+    elif vol_ratio >= 2.0: p3_mag = 2
+    elif vol_ratio >= 1.5: p3_mag = 1
+    else:                  p3_mag = 0
+    # Direction: last candle bullish ya bearish
+    last_c = df.iloc[-1]
+    p3_dir = 1 if last_c["close"] >= last_c["open"] else -1
+    p3 = p3_mag * p3_dir
 
     # ── P4 9 EMA ──────────────────────────────────────────────────────────────
     if   price > ema9_val and _slope(df["ema9"]) > 0: p4 =  2
@@ -637,7 +642,7 @@ def render_stock_scanner(kite=None):
             bc = st.columns(6)
             bc[0].metric("VWAP",        f"{r['p1']:+d}/±2")
             bc[1].metric("ORB (2-C)",   f"{r['p2']:+d}/±3")
-            bc[2].metric("Volume",      f"{r['p3']}/3  ({r['vol_ratio']}x)")
+            bc[2].metric("Volume",      f"{r['p3']:+d}/±3  ({r['vol_ratio']}x)")
             bc[3].metric("9 EMA",       f"{r['p4']:+d}/±2")
             bc[4].metric("1st Candle",  f"{r['p5']:+d}/±1")
             bc[5].metric("Nifty Align", f"{r['p6']:+d}/±1")
@@ -659,7 +664,7 @@ def render_stock_scanner(kite=None):
 
     st.divider()
     st.caption(
-        f"IFS v3 · P1 VWAP(±2) + P2 ORB-2candle(±3) + P3 Vol-prevday(0–3) + "
+        f"IFS v3 · P1 VWAP(±2) + P2 ORB-2candle(±3) + P3 Vol-directional(±3) + "
         f"P4 EMA9(±2) + P5 1stCandle(±1) + P6 Nifty(±1) · "
         f"Buy≥{BUY_ZONE} · Sell≤{SELL_ZONE}"
     )
