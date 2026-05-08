@@ -339,6 +339,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
             "pdh": 0, "pdl": 0, "rs_alpha": 0, "adr": 0, "adr_consumed": 0,
+            "down_consumed": 0, "up_consumed": 0,
             "filters": ["Result date / manual skip"],
             "sector": STOCK_SECTOR.get(symbol, "Other"),
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
@@ -373,6 +374,17 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     today_low     = float(df["low"].min())
     today_range   = (today_high - today_low) / today_low * 100 if today_low > 0 else 0
     adr_consumed  = round(today_range / adr * 100, 1) if adr > 0 else 0.0
+
+    # Directional ADR — kitna move already ho chuka hai signal direction mein
+    # SELL side: today_high se price kitna gira (down_move)
+    # BUY  side: today_low  se price kitna utha (up_move)
+    if adr > 0 and today_low > 0:
+        down_move     = (today_high - price) / today_low * 100
+        up_move       = (price - today_low)  / today_low * 100
+        down_consumed = round(down_move / adr * 100, 1)
+        up_consumed   = round(up_move   / adr * 100, 1)
+    else:
+        down_consumed = up_consumed = 0.0
 
     # Gap
     if prev_df is not None and len(prev_df) > 0:
@@ -514,7 +526,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         filters.append("Nifty bullish — sell downgraded")
         score = SELL_ZONE + 1
 
-    # Sector alignment — NEW in v3
+    # Sector alignment
     sec_key = f"__SEC__{STOCK_SECTOR.get(symbol, '')}"
     if sec_key in sector_trend:
         sec = sector_trend[sec_key]
@@ -524,6 +536,37 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         elif sec["dir"] == "BULLISH" and score <= SELL_ZONE:
             filters.append(f"Sector ({STOCK_SECTOR.get(symbol,'')}) bullish — sell downgraded")
             score = SELL_ZONE + 1
+
+    # ── Directional ADR filter ────────────────────────────────────────────────
+    # Agar stock already bahut gir chuka hai (SELL side) ya bahut uth chuka hai
+    # (BUY side) toh signal unreliable hai — bounce/reversal likely
+    if score <= SELL_ZONE and adr > 0:
+        if down_consumed >= 85:
+            filters.append(
+                f"ADR {down_consumed:.0f}% already consumed downside — "
+                f"stock extended, SELL blocked (bounce risk)"
+            )
+            score = SELL_ZONE + 1   # signal block
+        elif down_consumed >= 70:
+            filters.append(
+                f"ADR {down_consumed:.0f}% consumed downside — "
+                f"score reduced (room kam hai)"
+            )
+            score += 3              # penalty: less bearish
+
+    if score >= BUY_ZONE and adr > 0:
+        if up_consumed >= 85:
+            filters.append(
+                f"ADR {up_consumed:.0f}% already consumed upside — "
+                f"stock extended, BUY blocked (pullback risk)"
+            )
+            score = BUY_ZONE - 1   # signal block
+        elif up_consumed >= 70:
+            filters.append(
+                f"ADR {up_consumed:.0f}% consumed upside — "
+                f"score reduced (room kam hai)"
+            )
+            score -= 3             # penalty: less bullish
 
     # ── Signal ────────────────────────────────────────────────────────────────
     if hard_filter:              sig, dirn = "FILTERED",   "NEUTRAL"
@@ -566,9 +609,11 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         "rs_alpha":     rs_alpha,
         "adr":          adr,
         "adr_consumed": adr_consumed,
-        "filters":      filters,
-        "sector":       STOCK_SECTOR.get(symbol, "Other"),
-        "raw_score":    raw_score,
+        "filters":        filters,
+        "sector":         STOCK_SECTOR.get(symbol, "Other"),
+        "raw_score":      raw_score,
+        "down_consumed":  down_consumed,
+        "up_consumed":    up_consumed,
         "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6, "p7": p7,
     }
 
@@ -744,7 +789,7 @@ def render_stock_scanner(kite=None, alert_engine=None):
                     "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
                     "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0,
                     "orb_rng": 0, "pdh": 0, "pdl": 0, "rs_alpha": 0,
-                    "adr": 0, "adr_consumed": 0,
+                    "adr": 0, "adr_consumed": 0, "down_consumed": 0, "up_consumed": 0,
                     "filters": ["Result date / manual skip"],
                     "sector": STOCK_SECTOR.get(sym, "Other"),
                     "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
@@ -888,17 +933,27 @@ def render_stock_scanner(kite=None, alert_engine=None):
                 f"Vol: {r['vol_ratio']}x 5-day avg"
             )
             if r["adr"] > 0:
-                adr_c = r["adr_consumed"]
+                adr_c  = r["adr_consumed"]
+                dc     = r.get("down_consumed", 0)
+                uc     = r.get("up_consumed",   0)
+                # Directional consumed — relevant to signal direction
+                dir_consumed = dc if r["dir"] == "BEARISH" else uc if r["dir"] == "BULLISH" else adr_c
+                dir_label    = "Down" if r["dir"] == "BEARISH" else "Up" if r["dir"] == "BULLISH" else "Total"
                 adr_color = (
-                    "#d50000" if adr_c >= 85 else
-                    "#ff6f00" if adr_c >= 70 else
+                    "#d50000" if dir_consumed >= 85 else
+                    "#ff6f00" if dir_consumed >= 70 else
                     "#00c853"
+                )
+                warn = (
+                    "  🚫 BLOCKED — stock extended" if dir_consumed >= 85 else
+                    "  ⚠️ Room kam hai" if dir_consumed >= 70 else
+                    "  ✅ Room hai"
                 )
                 st.markdown(
                     f"<small>ADR: <b>{r['adr']}%</b>  |  "
-                    f"Consumed: <b style='color:{adr_color}'>{adr_c}%"
-                    f"{'  ⚠️ LATE ENTRY' if adr_c >= 70 else '  ✅ Room hai'}"
-                    f"</b></small>",
+                    f"Total consumed: <b>{adr_c}%</b>  |  "
+                    f"{dir_label} move consumed: "
+                    f"<b style='color:{adr_color}'>{dir_consumed}%{warn}</b></small>",
                     unsafe_allow_html=True,
                 )
             if r["filters"]:
