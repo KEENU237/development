@@ -315,7 +315,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
             "symbol": symbol, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
-            "pdh": 0, "pdl": 0, "rs_alpha": 0,
+            "pdh": 0, "pdl": 0, "rs_alpha": 0, "adr": 0, "adr_consumed": 0,
             "filters": ["Result date / manual skip"],
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
         }
@@ -336,6 +336,19 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     else:
         avg_vol = float(df["volume"].mean())
     vol_ratio = cur_vol / avg_vol if avg_vol > 0 else 0
+
+    # ADR — Average Daily Range (last 5 days)
+    if hist_df is not None and len(hist_df) > 0:
+        daily = hist_df.groupby(hist_df["date"].dt.date).agg(
+            h=("high", "max"), l=("low", "min")
+        )
+        adr = round(float(((daily["h"] - daily["l"]) / daily["l"] * 100).mean()), 2)
+    else:
+        adr = 0.0
+    today_high    = float(df["high"].max())
+    today_low     = float(df["low"].min())
+    today_range   = (today_high - today_low) / today_low * 100 if today_low > 0 else 0
+    adr_consumed  = round(today_range / adr * 100, 1) if adr > 0 else 0.0
 
     # Gap
     if prev_df is not None and len(prev_df) > 0:
@@ -514,10 +527,12 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         "orb_h":     round(orb_high,  2),
         "orb_l":     round(orb_low,   2),
         "orb_rng":   round(orb_rng,   2),
-        "pdh":       round(pdh,       2),
-        "pdl":       round(pdl,       2),
-        "rs_alpha":  rs_alpha,
-        "filters":   filters,
+        "pdh":          round(pdh,       2),
+        "pdl":          round(pdl,       2),
+        "rs_alpha":     rs_alpha,
+        "adr":          adr,
+        "adr_consumed": adr_consumed,
+        "filters":      filters,
         "sector":    STOCK_SECTOR.get(symbol, "Other"),
         "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6, "p7": p7,
     }
@@ -779,8 +794,22 @@ def render_stock_scanner(kite=None):
                 f"ORB: ₹{r['orb_h']} – ₹{r['orb_l']}  |  "
                 f"Range: {r['orb_rng']}%  |  "
                 f"Gap: {r['gap_pct']:+.2f}%  |  "
-                f"Vol: {r['vol_ratio']}x prev-day avg"
+                f"Vol: {r['vol_ratio']}x 5-day avg"
             )
+            if r["adr"] > 0:
+                adr_c = r["adr_consumed"]
+                adr_color = (
+                    "#d50000" if adr_c >= 85 else
+                    "#ff6f00" if adr_c >= 70 else
+                    "#00c853"
+                )
+                st.markdown(
+                    f"<small>ADR: <b>{r['adr']}%</b>  |  "
+                    f"Consumed: <b style='color:{adr_color}'>{adr_c}%"
+                    f"{'  ⚠️ LATE ENTRY' if adr_c >= 70 else '  ✅ Room hai'}"
+                    f"</b></small>",
+                    unsafe_allow_html=True,
+                )
             if r["filters"]:
                 for msg in r["filters"]:
                     st.warning(f"⚠️ {msg}")
