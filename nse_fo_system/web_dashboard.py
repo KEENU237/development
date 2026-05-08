@@ -4455,7 +4455,7 @@ def render_topbar() -> str:
     with c_nav:
         pages = ["📊  Live Dashboard", "🧠  Advanced Signals",
                  "🧭  Trend Compass",  "🔬  Backtester",
-                 "📡  Stock Scanner"]
+                 "📡  Stock Scanner",  "🎯  Scenario Analysis"]
         page = st.selectbox("nav", pages, label_visibility="collapsed")
 
     with c_status:
@@ -5025,6 +5025,10 @@ def main():
 
     elif "Stock Scanner" in page:
         render_stock_scanner(kite, alert_engine=st.session_state.get("alert_engine"))
+
+    elif "Scenario Analysis" in page:
+        from scenario_tab import render_scenario
+        render_scenario(kite)
 
 
 if __name__ == "__main__":
