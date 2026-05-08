@@ -1767,6 +1767,10 @@ def render_max_pain(cache: dict, symbol: str, expiry: str):
         return
 
     # ── Expiry countdown ──────────────────────────────────────────────────────
+    # BUG-FIX: days_left must be initialised BEFORE try/except — if fromisoformat
+    # fails (unlikely but possible) the pull-strength block below would raise
+    # UnboundLocalError and crash the entire Max Pain panel.
+    days_left = 7   # safe default → "WEAK" pull if parse fails
     try:
         from datetime import date as _date
         exp_date  = _date.fromisoformat(expiry)
@@ -1954,7 +1958,8 @@ def render_max_pain(cache: dict, symbol: str, expiry: str):
                 title     = "Strike Price",
                 gridcolor = "#e0e4ef",
                 tickformat= "d",
-                dtick     = 100 if symbol == "NIFTY" else 200,
+                # BUG-FIX: FINNIFTY has 50-pt steps — same dtick as NIFTY (100), not BANKNIFTY (200)
+                dtick     = 100 if symbol in ("NIFTY", "FINNIFTY") else 200,
             ),
             yaxis         = dict(
                 title     = "Total Writers' Payout (₹ OI units)",
