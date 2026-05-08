@@ -185,14 +185,15 @@ def _fetch(kite, token, from_dt, to_dt):
 def _trend_from_df(df):
     """Compute BULLISH/BEARISH/NEUTRAL from 5-min DataFrame."""
     if df is None or len(df) < 4:
-        return {"dir": "NEUTRAL", "score": 0, "price": 0, "vwap": 0}
+        return {"dir": "NEUTRAL", "score": 0, "price": 0, "vwap": 0, "open": 0}
 
     df = df.copy()
     df["vwap"] = _vwap(df)
     df["ema9"] = _ema(df["close"], 9)
-    price = float(df["close"].iloc[-1])
-    vwap  = float(df["vwap"].iloc[-1])
-    ema9  = float(df["ema9"].iloc[-1])
+    open_px = float(df["open"].iloc[0])
+    price   = float(df["close"].iloc[-1])
+    vwap    = float(df["vwap"].iloc[-1])
+    ema9    = float(df["ema9"].iloc[-1])
 
     bull = sum([
         price > vwap,
@@ -206,7 +207,8 @@ def _trend_from_df(df):
     else:           d, s = "NEUTRAL",  0
 
     return {"dir": d, "score": s,
-            "price": round(price, 2), "vwap": round(vwap, 2)}
+            "price": round(price, 2), "vwap": round(vwap, 2),
+            "open":  round(open_px, 2)}
 
 
 def _market_regime(df):
@@ -300,9 +302,9 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
             "symbol": symbol, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
-            "pdh": 0, "pdl": 0,
+            "pdh": 0, "pdl": 0, "rs_alpha": 0,
             "filters": ["Result date / manual skip"],
-            "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0,
+            "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
         }
 
     df = today_df.copy().reset_index(drop=True)
@@ -420,7 +422,22 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
     # ── P6 Nifty alignment ────────────────────────────────────────────────────
     p6 = nifty.get("score", 0)
 
-    score = p1 + p2 + p3 + p4 + p5 + p6
+    # ── P7 Relative Strength vs Nifty ────────────────────────────────────────
+    nifty_open = nifty.get("open", 0)
+    if nifty_open > 0 and open_px > 0:
+        stock_chg  = (price   - open_px)    / open_px    * 100
+        nifty_chg  = (nifty["price"] - nifty_open) / nifty_open * 100
+        rs_alpha   = round(stock_chg - nifty_chg, 2)   # outperformance vs Nifty
+        if   rs_alpha >=  0.5: p7 =  2
+        elif rs_alpha >=  0.2: p7 =  1
+        elif rs_alpha <= -0.5: p7 = -2
+        elif rs_alpha <= -0.2: p7 = -1
+        else:                  p7 =  0
+    else:
+        rs_alpha = 0.0
+        p7       = 0
+
+    score = p1 + p2 + p3 + p4 + p5 + p6 + p7
 
     # ── Post-score filters ────────────────────────────────────────────────────
 
@@ -484,9 +501,10 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
         "orb_rng":   round(orb_rng,   2),
         "pdh":       round(pdh,       2),
         "pdl":       round(pdl,       2),
+        "rs_alpha":  rs_alpha,
         "filters":   filters,
         "sector":    STOCK_SECTOR.get(symbol, "Other"),
-        "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6,
+        "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6, "p7": p7,
     }
 
 
@@ -722,13 +740,14 @@ def render_stock_scanner(kite=None):
         cols[9].markdown(_badge(r["signal"]), unsafe_allow_html=True)
 
         with st.expander(f"↳ {r['symbol']} — breakdown"):
-            bc = st.columns(6)
+            bc = st.columns(7)
             bc[0].metric("VWAP",        f"{r['p1']:+d}/±2")
             bc[1].metric("ORB (2-C)",   f"{r['p2']:+d}/±3")
             bc[2].metric("Volume",      f"{r['p3']:+d}/±3  ({r['vol_ratio']}x)")
             bc[3].metric("PDH/PDL",     f"{r['p4']:+d}/±3")
             bc[4].metric("1st Candle",  f"{r['p5']:+d}/±1")
             bc[5].metric("Nifty Align", f"{r['p6']:+d}/±1")
+            bc[6].metric("RS/Nifty",    f"{r['p7']:+d}/±2  ({r['rs_alpha']:+.1f}%)")
             if r["pdh"] > 0:
                 st.caption(f"PDH: ₹{r['pdh']:,.1f}  |  PDL: ₹{r['pdl']:,.1f}  |  Price: ₹{r['price']:,.1f}")
 
@@ -749,7 +768,7 @@ def render_stock_scanner(kite=None):
 
     st.divider()
     st.caption(
-        f"IFS v4 · P1 VWAP(±2) + P2 ORB-2candle(±3) + P3 Vol-directional(±3) + "
-        f"P4 PDH/PDL(±3) + P5 1stCandle(±1) + P6 Nifty(±1) · "
-        f"Buy≥{BUY_ZONE} · Sell≤{SELL_ZONE}"
+        f"IFS v4 · P1 VWAP(±2) + P2 ORB(±3) + P3 Vol(±3) + P4 PDH/PDL(±3) + "
+        f"P5 1stCandle(±1) + P6 Nifty(±1) + P7 RS/Nifty(±2) · "
+        f"Max±15 · Buy≥{BUY_ZONE} · Sell≤{SELL_ZONE}"
     )
