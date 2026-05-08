@@ -2175,12 +2175,13 @@ def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
     def to_l(oi): return round(oi / 100_000, 1)
 
     # Nearest call wall strictly above ATM
-    ce_strictly_above = [(s, v) for s, v in ce_above.items() if s > atm]
-    nearest_call = min(ce_strictly_above, key=lambda x: x[0]) if ce_strictly_above else None
+    # Note: ce_above is already filtered s > atm, so direct use here
+    ce_above_list = sorted(ce_above.items(), key=lambda x: x[0])
+    nearest_call  = ce_above_list[0] if ce_above_list else None   # lowest strike above ATM
 
     # Nearest put wall strictly below ATM
-    pe_strictly_below = [(s, v) for s, v in pe_below.items() if s < atm]
-    nearest_put  = max(pe_strictly_below, key=lambda x: x[0]) if pe_strictly_below else None
+    pe_below_list = sorted(pe_below.items(), key=lambda x: x[0], reverse=True)
+    nearest_put   = pe_below_list[0] if pe_below_list else None   # highest strike below ATM
 
     ce_score_penalty = 0   # penalty applied to BUY CE path (CE resistance)
     pe_score_penalty = 0   # penalty applied to BUY PE path (PE support = blocks downside)
@@ -2431,7 +2432,9 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
                         factors["OI Build"] = ("✅", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f} < CE₹{atm_ce_ltp:.0f}",
                                                "Put Writing — Sellers at support (bullish)", "#69f0ae")
                 elif atm_pe_ltp > 0:
-                    atm_build = "FS"; score -= 15; bear_count += 1
+                    # BUG-FIX: was -15 here but CE fallback (without PE LTP) is only +10.
+                    # True symmetry: both single-LTP fallbacks should be ±10 (less confident).
+                    atm_build = "FS"; score -= 10; bear_count += 1
                     factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f}",
                                            "PE OI building — likely bearish (CE LTP unavailable)", "#ff6d00")
                 else:
