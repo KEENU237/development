@@ -253,18 +253,17 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
             "symbol": symbol, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
+            "pdh": 0, "pdl": 0,
             "filters": ["Result date / manual skip"],
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0,
         }
 
     df = today_df.copy().reset_index(drop=True)
     df["vwap"] = _vwap(df)
-    df["ema9"] = _ema(df["close"], 9)
 
     price    = float(df["close"].iloc[-1])
     open_px  = float(df["open"].iloc[0])
     vwap_val = float(df["vwap"].iloc[-1])
-    ema9_val = float(df["ema9"].iloc[-1])
     cur_vol  = float(df["volume"].iloc[-1])
 
     # Volume baseline — previous day
@@ -280,6 +279,13 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
         gap_pct    = (open_px - prev_close) / prev_close * 100
     else:
         gap_pct = 0.0
+
+    # PDH / PDL — Previous Day High and Low
+    if prev_df is not None and len(prev_df) > 0:
+        pdh = float(prev_df["high"].max())
+        pdl = float(prev_df["low"].min())
+    else:
+        pdh = pdl = 0.0
 
     # ORB
     orb      = df.head(3)
@@ -339,10 +345,19 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
     p3_dir = 1 if last_c["close"] >= last_c["open"] else -1
     p3 = p3_mag * p3_dir
 
-    # ── P4 9 EMA ──────────────────────────────────────────────────────────────
-    if   price > ema9_val and _slope(df["ema9"]) > 0: p4 =  2
-    elif price < ema9_val and _slope(df["ema9"]) < 0: p4 = -2
-    else:                                               p4 =  0
+    # ── P4 PDH/PDL Breakout ───────────────────────────────────────────────────
+    if pdh <= 0 or pdl <= 0:
+        p4 = 0                                        # prev data nahi hai
+    elif price > pdh:
+        p4 =  3 if vol_ratio >= 1.5 else  1           # PDH breakout
+    elif price < pdl:
+        p4 = -3 if vol_ratio >= 1.5 else -1           # PDL breakdown
+    elif price >= pdh * (1 - 0.002):
+        p4 =  1                                        # PDH ke 0.2% ke andar — testing
+    elif price <= pdl * (1 + 0.002):
+        p4 = -1                                        # PDL ke 0.2% ke andar — testing
+    else:
+        p4 =  0                                        # Range ke andar
 
     # ── P5 First candle ───────────────────────────────────────────────────────
     fc  = df.iloc[0]
@@ -420,6 +435,8 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list):
         "orb_h":     round(orb_high,  2),
         "orb_l":     round(orb_low,   2),
         "orb_rng":   round(orb_rng,   2),
+        "pdh":       round(pdh,       2),
+        "pdl":       round(pdl,       2),
         "filters":   filters,
         "sector":    STOCK_SECTOR.get(symbol, "Other"),
         "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6,
@@ -643,9 +660,11 @@ def render_stock_scanner(kite=None):
             bc[0].metric("VWAP",        f"{r['p1']:+d}/±2")
             bc[1].metric("ORB (2-C)",   f"{r['p2']:+d}/±3")
             bc[2].metric("Volume",      f"{r['p3']:+d}/±3  ({r['vol_ratio']}x)")
-            bc[3].metric("9 EMA",       f"{r['p4']:+d}/±2")
+            bc[3].metric("PDH/PDL",     f"{r['p4']:+d}/±3")
             bc[4].metric("1st Candle",  f"{r['p5']:+d}/±1")
             bc[5].metric("Nifty Align", f"{r['p6']:+d}/±1")
+            if r["pdh"] > 0:
+                st.caption(f"PDH: ₹{r['pdh']:,.1f}  |  PDL: ₹{r['pdl']:,.1f}  |  Price: ₹{r['price']:,.1f}")
 
             sec_key = f"__SEC__{STOCK_SECTOR.get(r['symbol'], '')}"
             sec_t   = all_trends.get(sec_key, {})
@@ -664,7 +683,7 @@ def render_stock_scanner(kite=None):
 
     st.divider()
     st.caption(
-        f"IFS v3 · P1 VWAP(±2) + P2 ORB-2candle(±3) + P3 Vol-directional(±3) + "
-        f"P4 EMA9(±2) + P5 1stCandle(±1) + P6 Nifty(±1) · "
+        f"IFS v4 · P1 VWAP(±2) + P2 ORB-2candle(±3) + P3 Vol-directional(±3) + "
+        f"P4 PDH/PDL(±3) + P5 1stCandle(±1) + P6 Nifty(±1) · "
         f"Buy≥{BUY_ZONE} · Sell≤{SELL_ZONE}"
     )
