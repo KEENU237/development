@@ -4981,6 +4981,35 @@ def main():
     # ── Top navigation bar (sidebar hata diya) ───────────────────────────────
     page = render_topbar()
 
+    # ── Background Alert Runner ───────────────────────────────────────────────
+    # Kisi bhi page pe ho — alerts hamesha chalte rahenge.
+    # Live Dashboard wala cache (last_cache) use karta hai.
+    # Live Dashboard pe jaoge toh fresh cache se dobara check hoga (cooldown blocks duplicates).
+    try:
+        _bg_cache  = st.session_state.get("last_cache", {})
+        _bg_engine = st.session_state.get("alert_engine")
+        if _bg_cache and _bg_engine:
+            # UOA, GEX flip, VIX spike, PCR extreme, SMI, IV rank
+            _bg_new = _bg_engine.check_and_send(
+                _bg_cache, symbol, st.session_state.get("gex_history", [])
+            )
+            if _bg_new:
+                _hist = st.session_state.get("alert_history", [])
+                st.session_state["alert_history"] = (_bg_new + _hist)[:20]
+
+            # Nifty / BankNifty trade signal (BUY CE / BUY PE)
+            _bg_sig = generate_trade_signal(_bg_cache, symbol)
+            _bg_engine.send_trade_signal(_bg_sig)
+
+            # UOA save + Telegram
+            _bg_snap = st.session_state.get("snap_db")
+            for _uoa in _bg_cache.get("uoa_alerts", []):
+                _is_new = _bg_snap.save_uoa_alert(_uoa) if _bg_snap else False
+                if _is_new:
+                    _bg_engine.send_uoa_alert(_uoa)
+    except Exception as _bg_e:
+        logger.error(f"Background alert runner error: {_bg_e}")
+
     # ── Page routing ──────────────────────────────────────────────────────────
     if "Live Dashboard" in page:
         live_data_section(symbol, expiry)
