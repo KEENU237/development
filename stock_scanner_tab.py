@@ -299,6 +299,14 @@ def _prev_trading_day():
     return d
 
 
+def _prev_weekday(d):
+    """Given a date, return the weekday before it (skip Sat/Sun)."""
+    d = d - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def _trading_days_ago(n):
     """n trading days pehle ka date return karo (weekends skip)."""
     d = date.today()
@@ -327,11 +335,13 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     # ── Filter 0: Result date / manual skip ───────────────────────────────────
     if symbol.upper() in skip_list:
         return {
-            "symbol": symbol, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
+            "symbol": symbol, "score": 0, "raw_score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
             "pdh": 0, "pdl": 0, "rs_alpha": 0, "adr": 0, "adr_consumed": 0,
+            "down_consumed": 0, "up_consumed": 0,
             "filters": ["Result date / manual skip"],
+            "sector": STOCK_SECTOR.get(symbol, "Other"),
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
         }
 
@@ -364,6 +374,17 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     today_low     = float(df["low"].min())
     today_range   = (today_high - today_low) / today_low * 100 if today_low > 0 else 0
     adr_consumed  = round(today_range / adr * 100, 1) if adr > 0 else 0.0
+
+    # Directional ADR — kitna move already ho chuka hai signal direction mein
+    # SELL side: today_high se price kitna gira (down_move)
+    # BUY  side: today_low  se price kitna utha (up_move)
+    if adr > 0 and today_low > 0:
+        down_move     = (today_high - price) / today_low * 100
+        up_move       = (price - today_low)  / today_low * 100
+        down_consumed = round(down_move / adr * 100, 1)
+        up_consumed   = round(up_move   / adr * 100, 1)
+    else:
+        down_consumed = up_consumed = 0.0
 
     # Gap
     if prev_df is not None and len(prev_df) > 0:
@@ -487,7 +508,8 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         rs_alpha = 0.0
         p7       = 0
 
-    score = p1 + p2 + p3 + p4 + p5 + p6 + p7
+    score     = p1 + p2 + p3 + p4 + p5 + p6 + p7
+    raw_score = score   # pre-filter score — for breakdown display
 
     # ── Post-score filters ────────────────────────────────────────────────────
 
@@ -504,7 +526,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         filters.append("Nifty bullish — sell downgraded")
         score = SELL_ZONE + 1
 
-    # Sector alignment — NEW in v3
+    # Sector alignment
     sec_key = f"__SEC__{STOCK_SECTOR.get(symbol, '')}"
     if sec_key in sector_trend:
         sec = sector_trend[sec_key]
@@ -515,6 +537,37 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
             filters.append(f"Sector ({STOCK_SECTOR.get(symbol,'')}) bullish — sell downgraded")
             score = SELL_ZONE + 1
 
+    # ── Directional ADR filter ────────────────────────────────────────────────
+    # Agar stock already bahut gir chuka hai (SELL side) ya bahut uth chuka hai
+    # (BUY side) toh signal unreliable hai — bounce/reversal likely
+    if score <= SELL_ZONE and adr > 0:
+        if down_consumed >= 85:
+            filters.append(
+                f"ADR {down_consumed:.0f}% already consumed downside — "
+                f"stock extended, SELL blocked (bounce risk)"
+            )
+            score = SELL_ZONE + 1   # signal block
+        elif down_consumed >= 70:
+            filters.append(
+                f"ADR {down_consumed:.0f}% consumed downside — "
+                f"score reduced (room kam hai)"
+            )
+            score += 3              # penalty: less bearish
+
+    if score >= BUY_ZONE and adr > 0:
+        if up_consumed >= 85:
+            filters.append(
+                f"ADR {up_consumed:.0f}% already consumed upside — "
+                f"stock extended, BUY blocked (pullback risk)"
+            )
+            score = BUY_ZONE - 1   # signal block
+        elif up_consumed >= 70:
+            filters.append(
+                f"ADR {up_consumed:.0f}% consumed upside — "
+                f"score reduced (room kam hai)"
+            )
+            score -= 3             # penalty: less bullish
+
     # ── Signal ────────────────────────────────────────────────────────────────
     if hard_filter:              sig, dirn = "FILTERED",   "NEUTRAL"
     elif score >= BUY_ZONE + 2: sig, dirn = "STRONG BUY", "BULLISH"
@@ -524,14 +577,16 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     else:                       sig, dirn = "WAIT",        "NEUTRAL"
 
     # ── Entry / SL / Target ───────────────────────────────────────────────────
+    # ATR fallback: average candle range × 1.5 when ORB reference unavailable
+    avg_candle_range = float((df["high"] - df["low"]).mean())
     entry = stop = target = 0.0
-    if dirn == "BULLISH" and p2 > 0:
-        entry  = price
-        stop   = orb_low
+    if dirn == "BULLISH":
+        entry = price
+        stop  = orb_low if p2 > 0 else price - avg_candle_range * 1.5
         target = entry + (entry - stop) * 1.5
-    elif dirn == "BEARISH" and p2 < 0:
-        entry  = price
-        stop   = orb_high
+    elif dirn == "BEARISH":
+        entry = price
+        stop  = orb_high if p2 < 0 else price + avg_candle_range * 1.5
         target = entry - (stop - entry) * 1.5
 
     return {
@@ -554,8 +609,11 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         "rs_alpha":     rs_alpha,
         "adr":          adr,
         "adr_consumed": adr_consumed,
-        "filters":      filters,
-        "sector":    STOCK_SECTOR.get(symbol, "Other"),
+        "filters":        filters,
+        "sector":         STOCK_SECTOR.get(symbol, "Other"),
+        "raw_score":      raw_score,
+        "down_consumed":  down_consumed,
+        "up_consumed":    up_consumed,
         "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6, "p7": p7,
     }
 
@@ -652,16 +710,16 @@ def render_stock_scanner(kite=None, alert_engine=None):
     st.markdown("")
 
     # ── Market Regime Banner ──────────────────────────────────────────────────
-    r = regime["regime"]
-    if r == "CHOPPY":
+    regime_type = regime["regime"]
+    if regime_type == "CHOPPY":
         st.error(
             f"⚠️ CHOPPY MARKET — Nifty pehle 30 min mein sideways raha "
             f"(Range: {regime['range_pct']}%). Scanner signals aaj unreliable hain.")
-    elif r == "TRENDING_BULL":
+    elif regime_type == "TRENDING_BULL":
         st.success(
             f"✅ TRENDING BULL — Nifty strong bullish opening "
             f"(+{regime['move_pct']}%). BUY setups aaj reliable hain.")
-    elif r == "TRENDING_BEAR":
+    elif regime_type == "TRENDING_BEAR":
         st.warning(
             f"📉 TRENDING BEAR — Nifty strong bearish opening "
             f"({regime['move_pct']}%). SELL setups aaj reliable hain.")
@@ -726,10 +784,12 @@ def render_stock_scanner(kite=None, alert_engine=None):
             # Skip list fast path
             if sym.upper() in skip_list:
                 results.append({
-                    "symbol": sym, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
+                    "symbol": sym, "score": 0, "raw_score": 0,
+                    "signal": "FILTERED", "dir": "NEUTRAL",
                     "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
                     "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0,
                     "orb_rng": 0, "pdh": 0, "pdl": 0, "rs_alpha": 0,
+                    "adr": 0, "adr_consumed": 0, "down_consumed": 0, "up_consumed": 0,
                     "filters": ["Result date / manual skip"],
                     "sector": STOCK_SECTOR.get(sym, "Other"),
                     "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
@@ -740,43 +800,53 @@ def render_stock_scanner(kite=None, alert_engine=None):
             if df2 is not None and len(df2) >= 6:
                 today_df = df2[df2["date"].dt.date == today].copy().reset_index(drop=True)
                 prev_df  = df2[df2["date"].dt.date == prev_day].copy().reset_index(drop=True)
+                # Holiday fallback: agar prev_day pe data nahi (holiday tha) toh
+                # ek aur din peeche jao
+                if len(prev_df) == 0:
+                    fallback_day = _prev_weekday(prev_day)
+                    prev_df = df2[df2["date"].dt.date == fallback_day].copy().reset_index(drop=True)
                 hist_df  = df2[df2["date"].dt.date < today].copy().reset_index(drop=True)
-                r = _ifs(today_df, prev_df, sym,
-                         nifty_trend, all_trends, vix_val, skip_list,
-                         hist_df=hist_df)
-                if r:
-                    results.append(r)
+                scan_res = _ifs(today_df, prev_df, sym,
+                                nifty_trend, all_trends, vix_val, skip_list,
+                                hist_df=hist_df)
+                if scan_res:
+                    results.append(scan_res)
             time.sleep(0.35)  # Zerodha historical API: max ~3 req/sec
 
         prog.empty()
         st.session_state["sc_results"]      = results
         st.session_state["sc_time"]         = now.strftime("%H:%M:%S")
         st.session_state["sc_skip_used"]    = list(skip_list)
-        st.session_state["sc_last_auto_ts"] = time.time()  # timer reset
+        st.session_state["sc_last_auto_ts"] = time.time()   # timer reset
+        st.session_state["sc_just_scanned"] = True          # skip timer sleep this render
 
         # ── Telegram alerts for STRONG signals only ──────────────────────────
         if alert_engine is not None:
-            for r in results:
-                if r["signal"] in ("STRONG BUY", "STRONG SELL"):
-                    alert_engine.send_stock_signal(r)
+            for alert_row in results:
+                if alert_row["signal"] in ("STRONG BUY", "STRONG SELL"):
+                    alert_engine.send_stock_signal(alert_row)
 
-    # ── Auto-scan timer — results ke PEHLE, warna early return timer rok deta hai
+    # ── Auto-scan timer ───────────────────────────────────────────────────────
+    # sc_just_scanned flag skip karta hai immediate sleep after a fresh scan
     if st.session_state.get("sc_auto_enabled", False):
-        AUTO_INTERVAL = 300  # 5 minutes
-        last_ts   = st.session_state.get("sc_last_auto_ts", 0)
-        elapsed   = time.time() - last_ts
-        remaining = int(AUTO_INTERVAL - elapsed)
-
-        if remaining <= 0:
-            st.session_state["sc_auto_trigger"]  = True
-            st.session_state["sc_last_auto_ts"]  = time.time()
-            st.rerun()
+        if st.session_state.pop("sc_just_scanned", False):
+            pass  # This render cycle mein scan hua — timer skip, results dikhao
         else:
-            mins = remaining // 60
-            secs = remaining % 60
-            st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
-            time.sleep(5 if remaining <= 60 else 15)
-            st.rerun()
+            AUTO_INTERVAL = 300  # 5 minutes
+            last_ts   = st.session_state.get("sc_last_auto_ts", 0)
+            elapsed   = time.time() - last_ts
+            remaining = int(AUTO_INTERVAL - elapsed)
+
+            if remaining <= 0:
+                st.session_state["sc_auto_trigger"] = True
+                st.session_state["sc_last_auto_ts"] = time.time()
+                st.rerun()
+            else:
+                mins = remaining // 60
+                secs = remaining % 60
+                st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
+                time.sleep(3)   # max 3s chunks — UI less frozen
+                st.rerun()
 
     # ── Display ───────────────────────────────────────────────────────────────
     results   = st.session_state.get("sc_results", [])
@@ -833,6 +903,13 @@ def render_stock_scanner(kite=None, alert_engine=None):
         cols[9].markdown(_badge(r["signal"]), unsafe_allow_html=True)
 
         with st.expander(f"↳ {r['symbol']} — breakdown"):
+            # Show filter adjustment warning if score was changed
+            raw = r.get("raw_score", r["score"])
+            if raw != r["score"]:
+                st.caption(
+                    f"⚠️ Raw pillar score: **{raw:+d}** → Adjusted to **{r['score']:+d}** "
+                    f"(VIX / Nifty / Sector filter applied)"
+                )
             bc = st.columns(7)
             bc[0].metric("VWAP",        f"{r['p1']:+d}/±2")
             bc[1].metric("ORB (2-C)",   f"{r['p2']:+d}/±3")
@@ -856,17 +933,27 @@ def render_stock_scanner(kite=None, alert_engine=None):
                 f"Vol: {r['vol_ratio']}x 5-day avg"
             )
             if r["adr"] > 0:
-                adr_c = r["adr_consumed"]
+                adr_c  = r["adr_consumed"]
+                dc     = r.get("down_consumed", 0)
+                uc     = r.get("up_consumed",   0)
+                # Directional consumed — relevant to signal direction
+                dir_consumed = dc if r["dir"] == "BEARISH" else uc if r["dir"] == "BULLISH" else adr_c
+                dir_label    = "Down" if r["dir"] == "BEARISH" else "Up" if r["dir"] == "BULLISH" else "Total"
                 adr_color = (
-                    "#d50000" if adr_c >= 85 else
-                    "#ff6f00" if adr_c >= 70 else
+                    "#d50000" if dir_consumed >= 85 else
+                    "#ff6f00" if dir_consumed >= 70 else
                     "#00c853"
+                )
+                warn = (
+                    "  🚫 BLOCKED — stock extended" if dir_consumed >= 85 else
+                    "  ⚠️ Room kam hai" if dir_consumed >= 70 else
+                    "  ✅ Room hai"
                 )
                 st.markdown(
                     f"<small>ADR: <b>{r['adr']}%</b>  |  "
-                    f"Consumed: <b style='color:{adr_color}'>{adr_c}%"
-                    f"{'  ⚠️ LATE ENTRY' if adr_c >= 70 else '  ✅ Room hai'}"
-                    f"</b></small>",
+                    f"Total consumed: <b>{adr_c}%</b>  |  "
+                    f"{dir_label} move consumed: "
+                    f"<b style='color:{adr_color}'>{dir_consumed}%{warn}</b></small>",
                     unsafe_allow_html=True,
                 )
             if r["filters"]:
