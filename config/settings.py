@@ -4,8 +4,8 @@ Zerodha Kite Connect se data pull karta hai
 """
 
 # ─── ZERODHA API CREDENTIALS ───────────────────────────────────────────────────
-KITE_API_KEY    = "1llp18x99bahkfdu"
-KITE_API_SECRET = "p9z6wtv2mvx8leiw4ykdg96hb95fx9di"
+KITE_API_KEY    = "egl9nxx5tuqfxqdy"
+KITE_API_SECRET = "1ss4tmta7oz7rumwmmfpwxnse1w77ag0"
 KITE_ACCESS_TOKEN = ""   # Runtime mein set hoga (login ke baad)
 
 # ─── UOA SCANNER SETTINGS ──────────────────────────────────────────────────────

@@ -666,45 +666,45 @@ def _calc_iv_rank(symbol: str, current_iv: float) -> float:
 
 
 def _calc_iv(symbol, expiry, cache) -> dict:
-    kite    = st.session_state["kite"]
-    prices  = cache.get("prices", {})
-    sym_map = {
+    """
+    BUG-FIX: Was making 2 extra REST calls (get_option_chain + get_quote) every 15 sec.
+    Now reuses cache["oi_chain"] data that was already fetched in parallel threads.
+    Saves 2 REST API calls per cycle — ~1-2 sec faster per refresh.
+    """
+    prices   = cache.get("prices",   {})
+    oi_chain = cache.get("oi_chain", [])
+    sym_map  = {
         "NIFTY":     "NSE:NIFTY 50",
         "BANKNIFTY": "NSE:NIFTY BANK",
         "FINNIFTY":  "NSE:NIFTY FIN SERVICE",
     }
     spot = prices.get(sym_map.get(symbol, ""), 0)
-    if not spot:
+    if not spot or not oi_chain:
         return {}
 
     tte  = tte_years(expiry)
     if tte <= 0:
         return {}
 
-    step = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}.get(symbol, 50)
-    atm  = round(spot / step) * step
+    step   = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}.get(symbol, 50)
+    atm    = round(spot / step) * step
+    otm_up = atm + step * 3
+    otm_dn = atm - step * 3
 
     try:
-        chain  = kite.get_option_chain(symbol, expiry)
-        atm_ce = next((i for i in chain if i["strike"] == atm and i["instrument_type"] == "CE"), None)
-        atm_pe = next((i for i in chain if i["strike"] == atm and i["instrument_type"] == "PE"), None)
-        otm_up = atm + step * 3
-        otm_dn = atm - step * 3
-        otm_ce = next((i for i in chain if i["strike"] == otm_up and i["instrument_type"] == "CE"), None)
-        otm_pe = next((i for i in chain if i["strike"] == otm_dn and i["instrument_type"] == "PE"), None)
+        # ── Read LTPs from already-fetched oi_chain (zero extra REST calls) ──
+        ce_ltp = pe_ltp = oce_ltp = ope_ltp = 0.0
+        for row in oi_chain:
+            s = int(row.strike)
+            if s == int(atm):
+                ce_ltp = row.ce_ltp or 0.0
+                pe_ltp = row.pe_ltp or 0.0
+            elif s == int(otm_up):
+                oce_ltp = row.ce_ltp or 0.0
+            elif s == int(otm_dn):
+                ope_ltp = row.pe_ltp or 0.0
 
-        if not atm_ce or not atm_pe:
-            return {}
-
-        tokens = [f"NFO:{i['tradingsymbol']}" for i in [atm_ce, atm_pe, otm_ce, otm_pe] if i]
-        quotes = kite.get_quote(tokens)
-
-        def _ltp(inst):
-            return quotes.get(f"NFO:{inst['tradingsymbol']}", {}).get("last_price", 0) if inst else 0
-
-        ce_ltp = _ltp(atm_ce)
-        pe_ltp = _ltp(atm_pe)
-        if ce_ltp is None or pe_ltp is None or ce_ltp <= 0 or pe_ltp <= 0:
+        if ce_ltp <= 0 or pe_ltp <= 0:
             return {}
 
         iv_ce  = calc_iv(ce_ltp, spot, atm, tte, "CE") or 15.0
@@ -717,15 +717,11 @@ def _calc_iv(symbol, expiry, cache) -> dict:
         theta_rs = ((g_ce.theta if g_ce else 0) + (g_pe.theta if g_pe else 0)) * lot
 
         skew = 0.0
-        if otm_ce and otm_pe:
-            oce_ltp = _ltp(otm_ce)
-            ope_ltp = _ltp(otm_pe)
-            if oce_ltp and ope_ltp:
-                iv_oce = calc_iv(oce_ltp, spot, otm_up, tte, "CE") or atm_iv
-                iv_ope = calc_iv(ope_ltp, spot, otm_dn, tte, "PE") or atm_iv
-                skew   = iv_ope - iv_oce
+        if oce_ltp > 0 and ope_ltp > 0:
+            iv_oce = calc_iv(oce_ltp, spot, otm_up, tte, "CE") or atm_iv
+            iv_ope = calc_iv(ope_ltp, spot, otm_dn, tte, "PE") or atm_iv
+            skew   = iv_ope - iv_oce
 
-        # ── IV Rank — real 52-week history se calculate karo ─────────────────
         iv_rank = _calc_iv_rank(symbol, atm_iv)
 
         return {
@@ -2162,13 +2158,16 @@ def _detect_oi_walls(oi_chain: list, spot: float, step: int) -> dict:
         if row.pe_oi and row.pe_oi > 0:
             pe_data[s] = row.pe_oi
 
-    # Top 3 CE OI strikes at/above ATM (resistance)
-    ce_above = {s: v for s, v in ce_data.items() if s >= atm}
+    # Top 3 CE OI strikes STRICTLY above ATM (resistance)
+    # BUG-FIX: was `s >= atm` — ATM strike is NOT resistance, it's where price already is.
+    # Including ATM in resistance walls caused spurious -15 penalty on BUY CE at ATM.
+    ce_above = {s: v for s, v in ce_data.items() if s > atm}
     top_ce   = sorted(ce_above.items(), key=lambda x: x[1], reverse=True)[:3]
     top_ce   = sorted(top_ce, key=lambda x: x[0])   # display: low to high
 
-    # Top 3 PE OI strikes at/below ATM (support)
-    pe_below = {s: v for s, v in pe_data.items() if s <= atm}
+    # Top 3 PE OI strikes STRICTLY below ATM (support)
+    # BUG-FIX: was `s <= atm` — ATM strike is NOT support, it's where price already is.
+    pe_below = {s: v for s, v in pe_data.items() if s < atm}
     top_pe   = sorted(pe_below.items(), key=lambda x: x[1], reverse=True)[:3]
     top_pe   = sorted(top_pe, key=lambda x: x[0], reverse=True)  # display: high to low
 
@@ -2424,7 +2423,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
             elif pe_chg > oi_threshold:
                 if atm_pe_ltp > 0 and atm_ce_ltp > 0:
                     if atm_pe_ltp >= atm_ce_ltp * 0.9:
-                        atm_build = "FS"; score -= 20; bear_count += 1
+                        atm_build = "FS"; score -= 15; bear_count += 1   # BUG-FIX: was -20 vs +15 for CE (asymmetric bearish bias)
                         factors["OI Build"] = ("❌", f"PE OI +{pe_chg:,} | PE₹{atm_pe_ltp:.0f} CE₹{atm_ce_ltp:.0f}",
                                                "Fresh Put Buy — Bears entering (bearish)", "#ff1744")
                     else:
@@ -2824,6 +2823,16 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
 
     # ── NO TRADE — directional blocked by risk guards ─────────────────────────
     if range_bound_block or block_buying:
+        # BUG-FIX: Iron Condor fallback at line ~2932 is UNREACHABLE when block_buying=True
+        # because we return NO TRADE here before BUY CE/PE blocks execute.
+        # Fix: check IC conditions FIRST — if sell_mode + iv_rank > 50 + data ok → fire IC
+        # instead of NO TRADE. This correctly handles: VIX=26, score=30, sell mode active.
+        if (block_buying and sell_mode
+                and iv_rank > 50
+                and abs_score >= CONDOR_MIN_SCORE
+                and _ic_data_ok):
+            return _iron_condor_signal()
+
         _block_reason = ("GEX: Market is RANGE BOUND — MMs suppressing directional moves"
                          if range_bound_block
                          else f"VIX {vix:.1f} ≥ 25 — Extreme IV, buying options risks IV crush")
@@ -2859,6 +2868,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         loss_pct = round((1 - sl_mult) * 100)
         return {
             "signal":        "BUY CE",
+            "symbol":        symbol,        # BUG-FIX: Telegram message was hardcoded "NIFTY"
             "strike":        strike,
             "strike_reason": strike_reason,
             "entry":         entry,
@@ -2903,6 +2913,7 @@ def generate_trade_signal(cache: dict, symbol: str) -> dict:
         loss_pct = round((1 - sl_mult) * 100)
         return {
             "signal":        "BUY PE",
+            "symbol":        symbol,        # BUG-FIX: Telegram message was hardcoded "NIFTY"
             "strike":        strike,
             "strike_reason": strike_reason,
             "entry":         entry,

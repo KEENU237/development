@@ -429,7 +429,8 @@ class AlertEngine:
         conf    = sig.get("confluence", "—")
         now_str = datetime.now().strftime("%H:%M")
 
-        sig_key = f"TRADE_{s}_{strike}_{datetime.now().strftime('%Y%m%d_%H%M')[:13]}"
+        sym     = sig.get("symbol", "NIFTY")   # BUG-FIX: was hardcoded "NIFTY" even for BANKNIFTY
+        sig_key = f"TRADE_{s}_{sym}_{strike}_{datetime.now().strftime('%Y%m%d_%H%M')[:13]}"
         if self._in_cooldown(sig_key.rsplit("_", 1)[0]):
             return False
 
@@ -439,6 +440,7 @@ class AlertEngine:
             target  = sig.get("target", 0)
             sl      = sig.get("sl",     0)
             detail  = (
+                f"Symbol  : {sym}\n"
                 f"Strike  : {strike} CE\n"
                 f"Entry   : ₹{entry}\n"
                 f"Target  : ₹{target}  (+{sig.get('gain_pct',0)}%)\n"
@@ -447,13 +449,14 @@ class AlertEngine:
                 f"Score   : {score}/100  |  Confluence: {conf}\n"
                 f"VIX: {vix:.1f}  PCR: {pcr:.2f}  IV Rank: {iv_rank:.0f}%"
             )
-            action = f"NIFTY CE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
+            action = f"{sym} CE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
         elif s == "BUY PE":
             emoji   = "📉🔴"
             entry   = sig.get("entry",  0)
             target  = sig.get("target", 0)
             sl      = sig.get("sl",     0)
             detail  = (
+                f"Symbol  : {sym}\n"
                 f"Strike  : {strike} PE\n"
                 f"Entry   : ₹{entry}\n"
                 f"Target  : ₹{target}  (+{sig.get('gain_pct',0)}%)\n"
@@ -462,7 +465,7 @@ class AlertEngine:
                 f"Score   : {score}/100  |  Confluence: {conf}\n"
                 f"VIX: {vix:.1f}  PCR: {pcr:.2f}  IV Rank: {iv_rank:.0f}%"
             )
-            action = f"NIFTY PE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
+            action = f"{sym} PE {strike} khareedon. Entry: ₹{entry}, Target: ₹{target}, SL: ₹{sl}"
         else:  # Iron Condor
             emoji      = "🦅🟡"
             sell_ce    = sig.get("sell_ce",    "")
