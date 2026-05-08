@@ -299,6 +299,14 @@ def _prev_trading_day():
     return d
 
 
+def _prev_weekday(d):
+    """Given a date, return the weekday before it (skip Sat/Sun)."""
+    d = d - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def _trading_days_ago(n):
     """n trading days pehle ka date return karo (weekends skip)."""
     d = date.today()
@@ -327,11 +335,12 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     # ── Filter 0: Result date / manual skip ───────────────────────────────────
     if symbol.upper() in skip_list:
         return {
-            "symbol": symbol, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
+            "symbol": symbol, "score": 0, "raw_score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
             "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
             "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0, "orb_rng": 0,
             "pdh": 0, "pdl": 0, "rs_alpha": 0, "adr": 0, "adr_consumed": 0,
             "filters": ["Result date / manual skip"],
+            "sector": STOCK_SECTOR.get(symbol, "Other"),
             "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
         }
 
@@ -487,7 +496,8 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         rs_alpha = 0.0
         p7       = 0
 
-    score = p1 + p2 + p3 + p4 + p5 + p6 + p7
+    score     = p1 + p2 + p3 + p4 + p5 + p6 + p7
+    raw_score = score   # pre-filter score — for breakdown display
 
     # ── Post-score filters ────────────────────────────────────────────────────
 
@@ -524,14 +534,16 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     else:                       sig, dirn = "WAIT",        "NEUTRAL"
 
     # ── Entry / SL / Target ───────────────────────────────────────────────────
+    # ATR fallback: average candle range × 1.5 when ORB reference unavailable
+    avg_candle_range = float((df["high"] - df["low"]).mean())
     entry = stop = target = 0.0
-    if dirn == "BULLISH" and p2 > 0:
-        entry  = price
-        stop   = orb_low
+    if dirn == "BULLISH":
+        entry = price
+        stop  = orb_low if p2 > 0 else price - avg_candle_range * 1.5
         target = entry + (entry - stop) * 1.5
-    elif dirn == "BEARISH" and p2 < 0:
-        entry  = price
-        stop   = orb_high
+    elif dirn == "BEARISH":
+        entry = price
+        stop  = orb_high if p2 < 0 else price + avg_candle_range * 1.5
         target = entry - (stop - entry) * 1.5
 
     return {
@@ -555,7 +567,8 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
         "adr":          adr,
         "adr_consumed": adr_consumed,
         "filters":      filters,
-        "sector":    STOCK_SECTOR.get(symbol, "Other"),
+        "sector":       STOCK_SECTOR.get(symbol, "Other"),
+        "raw_score":    raw_score,
         "p1": p1, "p2": p2, "p3": p3, "p4": p4, "p5": p5, "p6": p6, "p7": p7,
     }
 
@@ -652,16 +665,16 @@ def render_stock_scanner(kite=None, alert_engine=None):
     st.markdown("")
 
     # ── Market Regime Banner ──────────────────────────────────────────────────
-    r = regime["regime"]
-    if r == "CHOPPY":
+    regime_type = regime["regime"]
+    if regime_type == "CHOPPY":
         st.error(
             f"⚠️ CHOPPY MARKET — Nifty pehle 30 min mein sideways raha "
             f"(Range: {regime['range_pct']}%). Scanner signals aaj unreliable hain.")
-    elif r == "TRENDING_BULL":
+    elif regime_type == "TRENDING_BULL":
         st.success(
             f"✅ TRENDING BULL — Nifty strong bullish opening "
             f"(+{regime['move_pct']}%). BUY setups aaj reliable hain.")
-    elif r == "TRENDING_BEAR":
+    elif regime_type == "TRENDING_BEAR":
         st.warning(
             f"📉 TRENDING BEAR — Nifty strong bearish opening "
             f"({regime['move_pct']}%). SELL setups aaj reliable hain.")
@@ -726,10 +739,12 @@ def render_stock_scanner(kite=None, alert_engine=None):
             # Skip list fast path
             if sym.upper() in skip_list:
                 results.append({
-                    "symbol": sym, "score": 0, "signal": "FILTERED", "dir": "NEUTRAL",
+                    "symbol": sym, "score": 0, "raw_score": 0,
+                    "signal": "FILTERED", "dir": "NEUTRAL",
                     "price": 0, "vwap": 0, "entry": 0, "stop": 0, "target": 0,
                     "vol_ratio": 0, "gap_pct": 0, "orb_h": 0, "orb_l": 0,
                     "orb_rng": 0, "pdh": 0, "pdl": 0, "rs_alpha": 0,
+                    "adr": 0, "adr_consumed": 0,
                     "filters": ["Result date / manual skip"],
                     "sector": STOCK_SECTOR.get(sym, "Other"),
                     "p1": 0, "p2": 0, "p3": 0, "p4": 0, "p5": 0, "p6": 0, "p7": 0,
@@ -740,43 +755,53 @@ def render_stock_scanner(kite=None, alert_engine=None):
             if df2 is not None and len(df2) >= 6:
                 today_df = df2[df2["date"].dt.date == today].copy().reset_index(drop=True)
                 prev_df  = df2[df2["date"].dt.date == prev_day].copy().reset_index(drop=True)
+                # Holiday fallback: agar prev_day pe data nahi (holiday tha) toh
+                # ek aur din peeche jao
+                if len(prev_df) == 0:
+                    fallback_day = _prev_weekday(prev_day)
+                    prev_df = df2[df2["date"].dt.date == fallback_day].copy().reset_index(drop=True)
                 hist_df  = df2[df2["date"].dt.date < today].copy().reset_index(drop=True)
-                r = _ifs(today_df, prev_df, sym,
-                         nifty_trend, all_trends, vix_val, skip_list,
-                         hist_df=hist_df)
-                if r:
-                    results.append(r)
+                scan_res = _ifs(today_df, prev_df, sym,
+                                nifty_trend, all_trends, vix_val, skip_list,
+                                hist_df=hist_df)
+                if scan_res:
+                    results.append(scan_res)
             time.sleep(0.35)  # Zerodha historical API: max ~3 req/sec
 
         prog.empty()
         st.session_state["sc_results"]      = results
         st.session_state["sc_time"]         = now.strftime("%H:%M:%S")
         st.session_state["sc_skip_used"]    = list(skip_list)
-        st.session_state["sc_last_auto_ts"] = time.time()  # timer reset
+        st.session_state["sc_last_auto_ts"] = time.time()   # timer reset
+        st.session_state["sc_just_scanned"] = True          # skip timer sleep this render
 
         # ── Telegram alerts for STRONG signals only ──────────────────────────
         if alert_engine is not None:
-            for r in results:
-                if r["signal"] in ("STRONG BUY", "STRONG SELL"):
-                    alert_engine.send_stock_signal(r)
+            for alert_row in results:
+                if alert_row["signal"] in ("STRONG BUY", "STRONG SELL"):
+                    alert_engine.send_stock_signal(alert_row)
 
-    # ── Auto-scan timer — results ke PEHLE, warna early return timer rok deta hai
+    # ── Auto-scan timer ───────────────────────────────────────────────────────
+    # sc_just_scanned flag skip karta hai immediate sleep after a fresh scan
     if st.session_state.get("sc_auto_enabled", False):
-        AUTO_INTERVAL = 300  # 5 minutes
-        last_ts   = st.session_state.get("sc_last_auto_ts", 0)
-        elapsed   = time.time() - last_ts
-        remaining = int(AUTO_INTERVAL - elapsed)
-
-        if remaining <= 0:
-            st.session_state["sc_auto_trigger"]  = True
-            st.session_state["sc_last_auto_ts"]  = time.time()
-            st.rerun()
+        if st.session_state.pop("sc_just_scanned", False):
+            pass  # This render cycle mein scan hua — timer skip, results dikhao
         else:
-            mins = remaining // 60
-            secs = remaining % 60
-            st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
-            time.sleep(5 if remaining <= 60 else 15)
-            st.rerun()
+            AUTO_INTERVAL = 300  # 5 minutes
+            last_ts   = st.session_state.get("sc_last_auto_ts", 0)
+            elapsed   = time.time() - last_ts
+            remaining = int(AUTO_INTERVAL - elapsed)
+
+            if remaining <= 0:
+                st.session_state["sc_auto_trigger"] = True
+                st.session_state["sc_last_auto_ts"] = time.time()
+                st.rerun()
+            else:
+                mins = remaining // 60
+                secs = remaining % 60
+                st.caption(f"⏱️ Auto-scan: {mins}m {secs}s mein — Tab khula rakho")
+                time.sleep(3)   # max 3s chunks — UI less frozen
+                st.rerun()
 
     # ── Display ───────────────────────────────────────────────────────────────
     results   = st.session_state.get("sc_results", [])
@@ -833,6 +858,13 @@ def render_stock_scanner(kite=None, alert_engine=None):
         cols[9].markdown(_badge(r["signal"]), unsafe_allow_html=True)
 
         with st.expander(f"↳ {r['symbol']} — breakdown"):
+            # Show filter adjustment warning if score was changed
+            raw = r.get("raw_score", r["score"])
+            if raw != r["score"]:
+                st.caption(
+                    f"⚠️ Raw pillar score: **{raw:+d}** → Adjusted to **{r['score']:+d}** "
+                    f"(VIX / Nifty / Sector filter applied)"
+                )
             bc = st.columns(7)
             bc[0].metric("VWAP",        f"{r['p1']:+d}/±2")
             bc[1].metric("ORB (2-C)",   f"{r['p2']:+d}/±3")
