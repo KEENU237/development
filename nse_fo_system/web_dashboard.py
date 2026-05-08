@@ -4972,7 +4972,7 @@ def main():
         render_backtester(symbol)
 
     elif "Stock Scanner" in page:
-        render_stock_scanner(kite)
+        render_stock_scanner(kite, alert_engine=st.session_state.get("alert_engine"))
 
 
 if __name__ == "__main__":

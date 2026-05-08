@@ -1,7 +1,7 @@
 """
 Intraday Stock Scanner — IFS v4.0
 ==================================
-6-pillar score + 7 filters + market regime detection
+7-pillar score + 6 filters + market regime detection
 
 Pillars:
   P1 VWAP alignment          : ±2
@@ -10,16 +10,19 @@ Pillars:
   P4 PDH/PDL breakout        : ±3
   P5 First candle bias       : ±1
   P6 Nifty alignment bonus   : ±1
-  Max: ±13  Buy zone: ≥8  Sell zone: ≤-6
+  P7 Relative Strength/Nifty : ±2
+  Max: ±15  Buy zone: ≥9  Sell zone: ≤-7
 
-Hard filters:
+Hard filters (cause FILTERED status):
   1. Gap > 1.5%              → FILTERED
-  2. VIX > 22                → BUY blocked
-  3. ORB invalid range       → p2 = 0
-  4. Nifty strong opposite   → downgrade
-  5. Sector index bearish    → BUY downgraded
-  6. Symbol in skip list     → FILTERED
-  7. Market Regime CHOPPY    → banner warning  ← NEW v4
+  2. Symbol in skip list     → FILTERED
+
+Soft filters (score adjustment / warning only):
+  3. ORB invalid range       → p2 = 0  (stock still scored)
+  4. VIX > 22                → BUY score zeroed
+  5. Nifty strong opposite   → score downgraded
+  6. Sector index opposite   → score downgraded
+  7. Market Regime CHOPPY    → banner warning
 """
 
 import time
@@ -76,6 +79,7 @@ _SECTOR_STOCKS = {
     "NIFTY FMCG": [
         "HINDUNILVR", "ITC", "BRITANNIA", "TATACONSUM", "GODREJCP",
         "DABUR", "MARICO", "COLPAL", "EMAMILTD",
+        "ZOMATO", "TRENT", "DMART",
     ],
     "NIFTY METAL": [
         "TATASTEEL", "HINDALCO", "JSWSTEEL", "NMDC", "SAIL",
@@ -87,6 +91,17 @@ _SECTOR_STOCKS = {
     "NIFTY INFRA": [
         "LT", "SIEMENS", "POWERGRID", "NTPC", "RECLTD", "PFC",
         "ADANIENT", "ADANIPORTS", "CONCOR", "IRCTC",
+        "ULTRACEMCO", "GRASIM",
+    ],
+    "NIFTY FIN SERVICE": [
+        "BAJFINANCE", "BAJAJFINSV", "SBILIFE", "HDFCLIFE",
+        "MUTHOOTFIN", "CHOLAFIN", "SHRIRAMFIN",
+    ],
+    "NIFTY CONSR DURBL": [
+        "TITAN", "HAVELLS", "ASIANPAINT", "BERGEPAINT", "PIDILITIND",
+    ],
+    "NIFTY OIL AND GAS": [
+        "RELIANCE",
     ],
 }
 # Reverse: symbol → sector index name
@@ -101,8 +116,8 @@ VIX_LIMIT  = 22.0
 GAP_LIMIT  = 1.5
 ORB_MIN    = 0.3
 ORB_MAX    = 1.5
-BUY_ZONE   = 8
-SELL_ZONE  = -6
+BUY_ZONE   = 9    # ±15 max → 9 = 60% threshold (was 8/±13 = 62%)
+SELL_ZONE  = -7   # symmetric tightening
 
 _SIG_COLOR = {
     "STRONG BUY":  "#00c853",
@@ -370,13 +385,20 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     orb_low  = float(orb["low"].min())
     orb_rng  = (orb_high - orb_low) / orb_low * 100
 
-    # ── Hard filters ──────────────────────────────────────────────────────────
-    filters = []
+    # ── Hard filters (FILTERED status) ───────────────────────────────────────
+    filters = []       # display warnings shown in expander
+    hard_filter = False  # True = stock completely FILTERED (only gap triggers)
+
     if abs(gap_pct) > GAP_LIMIT:
+        hard_filter = True
         filters.append(f"Gap {gap_pct:+.1f}% > ±{GAP_LIMIT}%")
+
+    # ORB range — soft: just zeroes p2, stock is still scored on other pillars
+    orb_invalid = False
     if len(df) > 3 and not (ORB_MIN <= orb_rng <= ORB_MAX):
+        orb_invalid = True
         filters.append(
-            f"ORB too {'tight' if orb_rng < ORB_MIN else 'wide'} ({orb_rng:.2f}%)"
+            f"ORB {'tight' if orb_rng < ORB_MIN else 'wide'} ({orb_rng:.2f}%) — P2 skipped"
         )
 
     # ── P1 VWAP ───────────────────────────────────────────────────────────────
@@ -387,7 +409,7 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
     # ── P2 ORB — 2-candle confirmation ───────────────────────────────────────
     # v3: Require 2 consecutive candle closes above/below ORB for full +3/-3
     # Single candle = +2/-2 (partial confidence)
-    if len(df) <= 3 or filters:
+    if len(df) <= 3 or orb_invalid:
         p2 = 0
     else:
         post_orb = df.iloc[3:]
@@ -494,12 +516,12 @@ def _ifs(today_df, prev_df, symbol, nifty, sector_trend, vix_val, skip_list,
             score = SELL_ZONE + 1
 
     # ── Signal ────────────────────────────────────────────────────────────────
-    if len(filters) >= 1:        sig, dirn = "FILTERED",   "NEUTRAL"
-    elif score >= BUY_ZONE + 2:  sig, dirn = "STRONG BUY", "BULLISH"
-    elif score >= BUY_ZONE:      sig, dirn = "BUY",         "BULLISH"
-    elif score <= SELL_ZONE - 2: sig, dirn = "STRONG SELL", "BEARISH"
-    elif score <= SELL_ZONE:     sig, dirn = "SELL",        "BEARISH"
-    else:                        sig, dirn = "WAIT",        "NEUTRAL"
+    if hard_filter:              sig, dirn = "FILTERED",   "NEUTRAL"
+    elif score >= BUY_ZONE + 2: sig, dirn = "STRONG BUY", "BULLISH"
+    elif score >= BUY_ZONE:     sig, dirn = "BUY",         "BULLISH"
+    elif score <= SELL_ZONE - 2:sig, dirn = "STRONG SELL", "BEARISH"
+    elif score <= SELL_ZONE:    sig, dirn = "SELL",        "BEARISH"
+    else:                       sig, dirn = "WAIT",        "NEUTRAL"
 
     # ── Entry / SL / Target ───────────────────────────────────────────────────
     entry = stop = target = 0.0
@@ -553,7 +575,7 @@ def _trend_badge(d):
             f"border-radius:4px;font-size:11px'>{d}</span>")
 
 
-def render_stock_scanner(kite=None):
+def render_stock_scanner(kite=None, alert_engine=None):
     st.markdown("## 📡 Intraday Stock Scanner")
     st.caption("IFS v4.0 · PDH/PDL · Directional Vol · Market Regime · 8 Sectors · 2-Candle ORB")
 
@@ -657,7 +679,7 @@ def render_stock_scanner(kite=None):
     # ── Controls ──────────────────────────────────────────────────────────────
     fc1, fc2, fc3 = st.columns([1, 1, 1])
     with fc1:
-        min_score = st.slider("Min Signal Strength (|IFS Score|)", 0, 12, 6)
+        min_score = st.slider("Min Signal Strength (|IFS Score|)", 0, 15, 6)
     with fc2:
         dir_f = st.selectbox("Direction", ["ALL", "BULLISH", "BEARISH"])
     with fc3:
@@ -712,12 +734,18 @@ def render_stock_scanner(kite=None):
                          hist_df=hist_df)
                 if r:
                     results.append(r)
-            time.sleep(0.08)
+            time.sleep(0.35)  # Zerodha historical API: max ~3 req/sec
 
         prog.empty()
         st.session_state["sc_results"]   = results
         st.session_state["sc_time"]      = now.strftime("%H:%M:%S")
         st.session_state["sc_skip_used"] = list(skip_list)
+
+        # ── Telegram alerts for STRONG signals ───────────────────────────────
+        if alert_engine is not None:
+            strong = [r for r in results if r["signal"] in ("STRONG BUY", "STRONG SELL")]
+            for r in strong:
+                alert_engine.send_stock_signal(r)
 
     # ── Display ───────────────────────────────────────────────────────────────
     results   = st.session_state.get("sc_results", [])
@@ -818,5 +846,6 @@ def render_stock_scanner(kite=None):
     st.caption(
         f"IFS v4 · P1 VWAP(±2) + P2 ORB(±3) + P3 Vol(±3) + P4 PDH/PDL(±3) + "
         f"P5 1stCandle(±1) + P6 Nifty(±1) + P7 RS/Nifty(±2) · "
-        f"Max±15 · Buy≥{BUY_ZONE} · Sell≤{SELL_ZONE}"
+        f"Max±15 · Strong Buy≥{BUY_ZONE+2} · Buy≥{BUY_ZONE} · "
+        f"Sell≤{SELL_ZONE} · Strong Sell≤{SELL_ZONE-2}"
     )
