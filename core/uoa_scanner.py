@@ -53,12 +53,15 @@ class UOAScanner:
         self.alerts: List[UOAAlert] = []
         self._vol_history: dict = {}  # tradingsymbol -> rolling avg volume
 
-    def scan(self, expiry: str) -> List[UOAAlert]:
-        """Saare configured symbols scan karo"""
+    def scan(self, expiry: str, ticker=None) -> List[UOAAlert]:
+        """
+        Saare configured symbols scan karo.
+        ticker: optional TickerManager — if connected, uses WS data for spot + option ticks.
+        """
         new_alerts = []
 
         for symbol in self.config["scan_symbols"]:
-            alerts = self._scan_symbol(symbol, expiry)
+            alerts = self._scan_symbol(symbol, expiry, ticker=ticker)
             new_alerts.extend(alerts)
 
         self.alerts = new_alerts
@@ -110,34 +113,77 @@ class UOAScanner:
             sentiment = "BULLISH" if opt_type == "CE" else "BEARISH"
             return (sentiment, itm_depth_pct)
 
-    def _scan_symbol(self, symbol: str, expiry: str) -> List[UOAAlert]:
+    # Spot index instrument tokens (Zerodha fixed values) — avoids REST for LTP
+    _SPOT_TOKENS = {
+        "NSE:NIFTY 50":          256265,
+        "NSE:NIFTY BANK":        260105,
+        "NSE:NIFTY FIN SERVICE": 257801,
+        "NSE:INDIA VIX":         264969,
+    }
+
+    def _spot_via_ticker(self, symbol: str, ticker) -> float:
+        """Get spot price from WebSocket memory — zero latency."""
+        spot_key = self.SPOT_MAP.get(symbol, "")
+        tok      = self._SPOT_TOKENS.get(spot_key, 0)
+        if tok and ticker:
+            try:
+                ltp = ticker.get_ltp(tok)
+                if ltp and ltp > 0:
+                    return float(ltp)
+            except Exception:
+                pass
+        return 0.0
+
+    def _scan_symbol(self, symbol: str, expiry: str,
+                     ticker=None) -> List[UOAAlert]:
         alerts = []
         chain = self.kite.get_option_chain(symbol, expiry)
         if not chain:
             return alerts
 
-        # ── Spot price fetch karo (Zerodha Kite LTP) ─────────────────────────
-        spot = 0.0
-        spot_key = self.SPOT_MAP.get(symbol, "")
-        if spot_key:
-            try:
-                ltp_data = self.kite.get_ltp([spot_key])
-                spot = ltp_data.get(spot_key, 0.0)
-            except Exception as e:
-                logger.warning(f"Spot LTP fetch failed for {symbol}: {e}")
+        # ── Spot price: WebSocket first, REST fallback ────────────────────────
+        spot = self._spot_via_ticker(symbol, ticker) if ticker else 0.0
+        if spot <= 0:
+            spot_key = self.SPOT_MAP.get(symbol, "")
+            if spot_key:
+                try:
+                    ltp_data = self.kite.get_ltp([spot_key])
+                    spot = ltp_data.get(spot_key, 0.0)
+                except Exception as e:
+                    logger.warning(f"Spot LTP fetch failed for {symbol}: {e}")
 
-        # ── Options quotes batch fetch ─────────────────────────────────────────
-        instruments_to_fetch = [f"NFO:{i['tradingsymbol']}" for i in chain[:60]]
-        if not instruments_to_fetch:
-            return alerts
+        # ── Options: try WebSocket ticks first (volume+OI in MODE_FULL) ───────
+        quotes   = {}
+        ws_hits  = 0
+        if ticker and ticker.is_connected():
+            for ins in chain[:60]:
+                tok  = ins.get("instrument_token")
+                tick = ticker.get_tick(tok) if tok else None
+                if tick and tick.get("volume", 0) > 0:
+                    # Map tick → quote-like dict
+                    quotes[f"NFO:{ins['tradingsymbol']}"] = {
+                        "volume":     tick.get("volume", 0),
+                        "oi":         tick.get("oi", 0),
+                        "last_price": tick.get("last_price", 0),
+                    }
+                    ws_hits += 1
 
-        quotes = {}
-        for i in range(0, len(instruments_to_fetch), 100):
-            try:
-                batch = self.kite.get_quote(instruments_to_fetch[i:i+100])
-                quotes.update(batch or {})
-            except Exception as e:
-                logger.error(f"UOA quote batch failed for {symbol}: {e}")
+        # ── REST fallback for instruments not yet in WS cache ─────────────────
+        instruments_to_fetch = [
+            f"NFO:{i['tradingsymbol']}" for i in chain[:60]
+            if f"NFO:{i['tradingsymbol']}" not in quotes
+        ]
+        if instruments_to_fetch:
+            for i in range(0, len(instruments_to_fetch), 100):
+                try:
+                    batch = self.kite.get_quote(instruments_to_fetch[i:i+100])
+                    quotes.update(batch or {})
+                except Exception as e:
+                    logger.error(f"UOA quote batch failed for {symbol}: {e}")
+
+        if ws_hits:
+            logger.debug(f"UOA {symbol}: {ws_hits} ticks from WS, "
+                         f"{len(instruments_to_fetch)} via REST")
 
         for instrument in chain[:60]:
             ts = instrument["tradingsymbol"]

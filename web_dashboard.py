@@ -184,6 +184,7 @@ try:
     from core.alert_engine   import AlertEngine
     from core.trend_compass  import TrendCompass
     from core.backtest_engine import BacktestEngine, BacktestConfig
+    from core.ticker          import TickerManager
     from data.trade_log       import TradeLog
     from data.market_snapshot import SnapshotDB, SnapshotCollector
     IMPORTS_OK   = True
@@ -191,6 +192,14 @@ try:
 except Exception as exc:
     IMPORTS_OK   = False
     IMPORT_ERROR = str(exc)
+
+# ── WebSocket instrument tokens (NSE index tokens — Zerodha fixed values) ────
+_SPOT_TOKENS = {
+    "NSE:NIFTY 50":          256265,
+    "NSE:NIFTY BANK":        260105,
+    "NSE:NIFTY FIN SERVICE": 257801,
+    "NSE:INDIA VIX":         264969,
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -226,6 +235,18 @@ def init_session() -> bool:
             st.session_state["snap_db"]        = _snap_db
             st.session_state["snap_collector"] = SnapshotCollector(_snap_db)
             st.session_state["bt_engine"]      = BacktestEngine(_snap_db)
+
+            # ── WebSocket Ticker — real-time prices without REST rate limits ──
+            try:
+                _ticker = TickerManager(kite.api_key, kite.get_access_token())
+                _ticker.subscribe(list(_SPOT_TOKENS.values()))
+                _ticker.start()
+                st.session_state["ticker"] = _ticker
+                logger.info("TickerManager started — WebSocket live")
+            except Exception as _te:
+                logger.warning(f"TickerManager failed, REST fallback active: {_te}")
+                st.session_state["ticker"] = None
+
         except Exception as exc:
             st.error(f"❌ Connection failed: {exc}")
             return False
@@ -279,6 +300,20 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
 
     # ── Worker functions (parallel chalenge) ─────────────────────────────────
     def _fetch_prices():
+        # ── Try WebSocket first (instant, zero API cost) ──────────────────────
+        try:
+            _ticker = st.session_state.get("ticker")
+            if _ticker and _ticker.is_connected():
+                ws_prices = {}
+                for key, tok in _SPOT_TOKENS.items():
+                    ltp = _ticker.get_ltp(tok)
+                    if ltp is not None and ltp > 0:
+                        ws_prices[key] = ltp
+                if len(ws_prices) >= 3:          # got most prices — use WS data
+                    return ws_prices
+        except Exception as _we:
+            logger.debug(f"WS price read failed: {_we}")
+        # ── REST fallback ─────────────────────────────────────────────────────
         try:
             return kite.get_ltp([
                 "NSE:NIFTY 50", "NSE:NIFTY BANK",
@@ -313,7 +348,9 @@ def fetch_all_data(symbol: str, expiry: str) -> dict:
 
     def _fetch_uoa():
         try:
-            uoa_obj.scan(expiry)
+            # Pass ticker so UOA uses WebSocket ticks when available
+            _ws = st.session_state.get("ticker")
+            uoa_obj.scan(expiry, ticker=_ws)
             return uoa_obj.get_top_alerts(10)
         except Exception as exc:
             logger.error(f"UOA: {exc}")
@@ -1235,6 +1272,16 @@ def render_header(symbol, expiry, cache):
                  "PRE-OPEN": "#ffd740", "WEEKEND": "#888"}.get(status, "#ffd740")
     now       = datetime.now().strftime("%d %b %Y  %H:%M:%S")
     fetched   = cache.get("fetched_at", "--:--:--")
+    ws_on     = cache.get("ws_connected", False)
+    ws_badge  = (
+        "<span style='background:#e8f5e9;color:#2e7d32;border-radius:8px;"
+        "padding:2px 7px;font-size:10px;font-weight:600;margin-left:6px'>"
+        "🟢 WS</span>"
+        if ws_on else
+        "<span style='background:#fbe9e7;color:#bf360c;border-radius:8px;"
+        "padding:2px 7px;font-size:10px;font-weight:600;margin-left:6px'>"
+        "🔴 REST</span>"
+    )
 
     try:
         tlog    = st.session_state["trade_log"]
@@ -1262,6 +1309,7 @@ def render_header(symbol, expiry, cache):
                              background:{s_color};display:inline-block"></span>
                 <span style="color:#5a6a8a">{status}</span>
             </span>
+            {ws_badge}
         </div>
         <div style="display:flex;align-items:center;gap:20px">
             <div>
@@ -3583,9 +3631,79 @@ def _render_alert_history():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LIVE DATA FRAGMENT — har 60 sec mein auto-refresh, page reload nahi hoga
 # ══════════════════════════════════════════════════════════════════════════════
-@st.fragment(run_every=60)          # ← KEY FIX: ye sirf data section refresh karta hai
+# LIVE SPOT BAR — WebSocket se har 2 sec mein refresh (sirf prices)
+# ══════════════════════════════════════════════════════════════════════════════
+@st.fragment(run_every=2)
+def _live_spot_bar():
+    """
+    Ultra-fast 2-second fragment — reads directly from WebSocket memory.
+    No REST call, no API cost. Shows live NIFTY / BN / VIX with WS badge.
+    """
+    _ticker = st.session_state.get("ticker")
+    ws_ok   = _ticker is not None and _ticker.is_connected()
+
+    if not ws_ok:
+        return  # silently skip — main data section will show prices via REST
+
+    nifty = _ticker.get_ltp(_SPOT_TOKENS["NSE:NIFTY 50"])
+    bnk   = _ticker.get_ltp(_SPOT_TOKENS["NSE:NIFTY BANK"])
+    vix   = _ticker.get_ltp(_SPOT_TOKENS["NSE:INDIA VIX"])
+    fin   = _ticker.get_ltp(_SPOT_TOKENS["NSE:NIFTY FIN SERVICE"])
+
+    if not nifty:
+        return   # ticks not received yet
+
+    # ── Prev close se change (stored from last full fetch) ────────────────────
+    prev = st.session_state.get("last_cache", {}).get("prices", {})
+
+    def _chg(curr, sym_key):
+        p = prev.get(sym_key, 0)
+        if p and curr:
+            c = curr - p
+            pct = c / p * 100
+            return c, pct
+        return None, None
+
+    n_c,  n_p  = _chg(nifty, "NSE:NIFTY 50")
+    bn_c, bn_p = _chg(bnk,   "NSE:NIFTY BANK")
+
+    cols = st.columns([2, 2, 1.2, 1, 0.8])
+
+    with cols[0]:
+        delta_str = f"{n_c:+.0f} ({n_p:+.2f}%)" if n_c is not None else None
+        st.metric("⚡ NIFTY 50",
+                  f"₹{nifty:,.2f}",
+                  delta=delta_str)
+
+    with cols[1]:
+        delta_str = f"{bn_c:+.0f} ({bn_p:+.2f}%)" if bn_c is not None else None
+        st.metric("⚡ BANK NIFTY",
+                  f"₹{bnk:,.2f}" if bnk else "—",
+                  delta=delta_str)
+
+    with cols[2]:
+        vix_col = "🔴" if (vix or 0) > 20 else ("🟢" if (vix or 0) < 14 else "🟡")
+        st.metric(f"{vix_col} INDIA VIX",
+                  f"{vix:.2f}" if vix else "—")
+
+    with cols[3]:
+        st.metric("FIN SVC", f"₹{fin:,.0f}" if fin else "—")
+
+    with cols[4]:
+        st.markdown(
+            "<div style='padding-top:28px'>"
+            "<span style='background:#e8f5e9;color:#2e7d32;border-radius:10px;"
+            "padding:3px 9px;font-size:11px;font-weight:600'>"
+            "🟢 WebSocket</span></div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LIVE DATA FRAGMENT — har 15 sec mein auto-refresh (WebSocket speeds up LTP)
+# ══════════════════════════════════════════════════════════════════════════════
+@st.fragment(run_every=15)          # Was 60s — WebSocket makes LTP instant so 15s is safe
 def live_data_section(symbol, expiry):
     """
     Ye function har 60 seconds mein automatically re-run hota hai.
@@ -3593,9 +3711,16 @@ def live_data_section(symbol, expiry):
     Sirf ye section update hota hai, poora page reload nahi hota.
     """
 
-    # Fresh data fetch
+    # ── Live Spot Bar — WebSocket 2-sec ticker (runs independently above) ────
+    _live_spot_bar()
+
+    # Fresh data fetch (LTP from WS cache if connected, else REST)
     with st.spinner("🔄 Fetching live data..."):
         cache = fetch_all_data(symbol, expiry)
+
+    # Store WebSocket status in cache for header badge
+    _ticker = st.session_state.get("ticker")
+    cache["ws_connected"] = bool(_ticker and _ticker.is_connected())
 
     # Share cache with Tab 2 (avoids duplicate API calls)
     st.session_state["last_cache"] = cache
@@ -4978,6 +5103,22 @@ def main():
         expiry = get_nearest_expiry(symbol, kite=kite.kite).isoformat()
     except Exception:
         expiry = get_nearest_expiry(symbol).isoformat()
+
+    # ── Option chain WebSocket subscription ──────────────────────────────────
+    # Once per expiry — subscribe NFO option tokens so ticks flow in real-time
+    _ws_ticker  = st.session_state.get("ticker")
+    _chain_key  = f"ws_subscribed_{symbol}_{expiry}"
+    if _ws_ticker and not st.session_state.get(_chain_key):
+        try:
+            _chain_instr = kite.get_option_chain(symbol, expiry)
+            _opt_tokens  = [i["instrument_token"] for i in _chain_instr[:250]]
+            if _opt_tokens:
+                _ws_ticker.subscribe(_opt_tokens)
+                st.session_state[_chain_key] = True
+                logger.info(f"WS: subscribed {len(_opt_tokens)} option tokens "
+                            f"for {symbol}/{expiry}")
+        except Exception as _wse:
+            logger.warning(f"Option chain WS subscription failed: {_wse}")
 
     # ── Top navigation bar (sidebar hata diya) ───────────────────────────────
     page = render_topbar()
